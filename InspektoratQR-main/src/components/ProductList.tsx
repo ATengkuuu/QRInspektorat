@@ -1,0 +1,364 @@
+import { useState, useEffect } from "react";
+import { Save, Package, Trash2, QrCode, Squircle, Search } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
+import { saveAs } from "file-saver";
+import ProductForm from "./ProductForm";
+import DeleteConfirmationModal from "./DeleteConfirmationModal";
+import { supabase } from "../lib/supabase";
+import { deleteImage } from "../lib/storage";
+import { v4 as uuidv4 } from 'uuid'
+
+interface Product {
+  id: string;
+  name: string;
+  location: string;
+  quantity: number;
+  image: string;
+  timestamp: number;
+}
+
+function generateUUID() {
+  return typeof crypto?.randomUUID === "function"
+    ? crypto.randomUUID()
+    : uuidv4();
+}
+
+const ProductList = () => {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [showForm, setShowForm] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [showQRModal, setShowQRModal] = useState(false);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchProducts();
+  }, []);
+
+  const fetchProducts = async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      const { data, error: fetchError } = await supabase
+        .from("products")
+        .select("*")
+        .order("timestamp", { ascending: false });
+
+      if (fetchError) throw fetchError;
+
+      setProducts(data || []);
+    } catch (err) {
+      console.error("Error fetching products:", err);
+      setError("Failed to fetch products. Please try again.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const saveProduct = async (
+    productData: Omit<Product, "id" | "timestamp">
+  ) => {
+    try {
+      setError(null);
+      const timestamp = Date.now();
+
+      if (editingProduct) {
+        // If image has changed, delete the old one
+        if (
+          editingProduct.image &&
+          editingProduct.image !== productData.image
+        ) {
+          await deleteImage(editingProduct.image);
+        }
+
+        // Update existing product
+        const { error: updateError } = await supabase
+          .from("products")
+          .update({
+            name: productData.name,
+            location: productData.location,
+            quantity: productData.quantity,
+            image: productData.image, // Ensure image URL is included
+            timestamp,
+          })
+          .eq("id", editingProduct.id);
+
+        if (updateError) throw updateError;
+      } else {
+        // Add new product
+        const { error: insertError } = await supabase.from("products").insert([
+          {
+            id: generateUUID(),
+
+            name: productData.name,
+            location: productData.location,
+            quantity: productData.quantity,
+            image: productData.image, // Ensure image URL is included
+            timestamp,
+          },
+        ]);
+
+        if (insertError) throw insertError;
+      }
+
+      await fetchProducts(); // Refresh the list
+      setShowForm(false);
+      setEditingProduct(null);
+    } catch (err) {
+      console.error("Error saving product:", err);
+      setError("Failed to save product. Please try again.");
+    }
+  };
+
+  const handleDeleteClick = (product: Product) => {
+    setProductToDelete(product);
+    setShowDeleteModal(true);
+  };
+
+  const deleteProduct = async () => {
+    if (!productToDelete) return;
+
+    try {
+      setError(null);
+
+      if (productToDelete.image) {
+        await deleteImage(productToDelete.image);
+      }
+
+      const { error: deleteError } = await supabase
+        .from("products")
+        .delete()
+        .eq("id", productToDelete.id);
+
+      if (deleteError) throw deleteError;
+
+      await fetchProducts(); // Refresh the list
+      setShowDeleteModal(false);
+      setProductToDelete(null);
+    } catch (err) {
+      console.error("Error deleting product:", err);
+      setError("Failed to delete product. Please try again.");
+    }
+  };
+
+  const handleEdit = (product: Product) => {
+    setEditingProduct(product);
+    setShowForm(true);
+  };
+
+  const handleShowQR = (product: Product) => {
+    setSelectedProduct(product);
+    setShowQRModal(true);
+  };
+
+  const downloadQR = () => {
+    if (!selectedProduct) return;
+
+    const canvas = document.createElement("canvas");
+    const qrCode = document.getElementById("product-qr");
+    if (!qrCode) return;
+
+    const svgData = new XMLSerializer().serializeToString(qrCode);
+    const img = new Image();
+    img.onload = () => {
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+
+      ctx.fillStyle = "white";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.drawImage(img, 0, 0);
+      canvas.toBlob((blob) => {
+        if (blob) {
+          saveAs(blob, `qr-${selectedProduct.name}.png`);
+        }
+      });
+    };
+    img.src = "data:image/svg+xml;base64," + btoa(svgData);
+  };
+
+  const filteredProducts = products.filter((product) =>
+    product.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-pad">
+      <h1 className="text-[11px] font-bold mb-2">Product List</h1>
+
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <p className="text-red-600">{error}</p>
+        </div>
+      )}
+
+      <div className="mb-2 relative">
+        <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+          <Search size={20} className="text-gray-400" />
+        </div>
+        <input
+          type="text"
+          placeholder="Search..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="mock-input w-full pl-8"
+        />
+      </div>
+
+      <button
+        onClick={() => setShowForm(true)}
+        className="primary-button w-full flex items-center justify-center gap-1 mb-2"
+      >
+        <Save size={14} />
+        Add Product
+      </button>
+
+      {filteredProducts.length === 0 ? (
+        <div className="text-center py-12 px-4">
+          {products.length === 0 ? (
+            <>
+              <Package size={64} className="mx-auto text-gray-400 mb-4" />
+              <h2 className="text-xl font-semibold mb-2">No Products Yet</h2>
+              <p className="text-gray-600">
+                Start by adding your first product using the button above.
+              </p>
+            </>
+          ) : (
+            <>
+              <Search size={64} className="mx-auto text-gray-400 mb-4" />
+              <h2 className="text-xl font-semibold mb-2">No Products Found</h2>
+              <p className="text-gray-600">Try adjusting your search query.</p>
+
+
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {filteredProducts.map((product) => (
+            <div key={product.id} className="product-card mb-2">
+
+
+
+              <div className="flex items-center gap-4">
+                {product.image ? (
+                  <img
+                    src={product.image}
+                    alt={product.name}
+                    className="product-thumb"
+                  />
+                ) : (
+                  <div className="product-thumb bg-gray-100">
+                    <Package size={24} className="text-gray-400" />
+                  </div>
+                )}
+                <div className="flex-1">
+                  <h3 className="font-semibold">{product.name}</h3>
+                  <p className="text-sm text-gray-600">{product.location}</p>
+                  <p className="text-sm text-gray-600">
+                    Qty: {product.quantity}
+                  </p>
+                </div>
+                <div className="product-actions">
+                  <button
+                    onClick={() => handleShowQR(product)}
+                    className="icon-action bg-blue-500"
+                  >
+                    <QrCode size={20} />
+                  </button>
+                  <button
+                    onClick={() => handleEdit(product)}
+                    className="icon-action bg-green-500"
+                  >
+                    <Squircle size={20} />
+                  </button>
+                  <button
+                    onClick={() => handleDeleteClick(product)}
+                    className="icon-action bg-red-500"
+                  >
+                    <Trash2 size={20} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {showForm && (
+        <div className="modal-backdrop">
+          <ProductForm
+            onSave={saveProduct}
+            onCancel={() => {
+              setShowForm(false);
+              setEditingProduct(null);
+            }}
+            initialData={editingProduct}
+          />
+        </div>
+      )}
+
+      {showQRModal && selectedProduct && (
+        <div className="modal-backdrop">
+          <div className="modal-card">
+            <h2 className="modal-title">
+              QR Code Product
+            </h2>
+            <div className="flex justify-center mb-4">
+              <QRCodeSVG
+                id="product-qr"
+                value={`${window.location.origin}/product/${selectedProduct.id}`}
+                size={155}
+                level="H"
+                includeMargin={true}
+              />
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={downloadQR}
+                className="primary-button flex-1"
+              >
+                Download QR
+              </button>
+              <button
+                onClick={() => {
+                  setShowQRModal(false);
+                  setSelectedProduct(null);
+                }}
+                className="secondary-button flex-1"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteModal && productToDelete && (
+        <DeleteConfirmationModal
+          productName={productToDelete.name}
+          onConfirm={deleteProduct}
+          onCancel={() => {
+            setShowDeleteModal(false);
+            setProductToDelete(null);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+export default ProductList;
