@@ -52,7 +52,7 @@ body {
 .modal-card { width: min(100%, 220px); background: #fff; border: 1px solid #bbb; border-radius: 12px; padding: 10px; }
 .modal-title { font-size: 11px; font-weight: 700; margin: 0 0 12px; }
 .modal-label { display: block; font-size: 8px; font-weight: 700; margin: 8px 0 4px; }
-.auth-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 138px 12px 12px; background: linear-gradient(rgba(255,255,255,.58), rgba(255,255,255,.9)), url('/gedunginspektorat.jpg') center top / cover no-repeat; }
+.auth-screen { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 138px 12px 12px; background: linear-gradient(rgba(255,255,255,.58), rgba(255,255,255,.9)), url('/gedunginspektorat.png') center top / cover no-repeat; }
 .auth-card { width: 100%; max-width: 212px; padding: 7px; background: #fff; border: 1px solid #aaa; border-radius: 12px; }
 .auth-logo { width: 48px; height: 48px; object-fit: contain; margin: -2px auto 9px; display: block; }
 .auth-heading { margin: 0 0 10px; text-align: center; font-size: 8px; font-weight: 700; }
