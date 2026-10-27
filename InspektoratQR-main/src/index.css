@@ -544,8 +544,8 @@ img {
   padding: 30vh 12px 30px;
   background-color: #fff;
   background-image: url("/gedunginspektorat.png");
-  background-position: center top;
-  background-size: 100% auto;
+  background-position: center -72px;
+  background-size: 140% auto;
   background-repeat: no-repeat;
 }
 
