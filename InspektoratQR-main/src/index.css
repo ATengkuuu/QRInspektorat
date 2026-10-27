@@ -235,11 +235,14 @@ img {
 }
 
 .user-panel {
-  margin: -1px 12px 0;
+  position: relative;
+  z-index: 2;
+  margin: 0 12px;
   padding: 12px;
   border: 1px solid #c8c8c8;
   border-radius: 12px;
   background: #fff;
+  box-shadow: 0 0 0 1px rgba(200, 200, 200, 0.12);
 }
 
 .user-menu-panel {

@@ -12,6 +12,7 @@ const labels = {
 
 const getLanguage = (): Language => localStorage.getItem('qr_language') === 'id' ? 'id' : 'en'
 const notifyPreferences = () => window.dispatchEvent(new Event('qr-preferences-change'))
+const normalizeDate = (value?: string) => value ? value.slice(0, 10) : ''
 
 const UserHero = ({ title, language, user }: { title: string; language: Language; user: ApiUser | null }) => {
   const navigate = useNavigate()
@@ -51,11 +52,15 @@ const ProfileScreen = ({ language }: { language: Language }) => {
   const text = labels[language]
   const [form, setForm] = useState<ApiUser>({ id: '', username: '', email: '', dateOfBirth: '', field: '', profileImage: '' })
   const [message, setMessage] = useState('')
-  useEffect(() => { if (user) setForm(user) }, [user])
+  useEffect(() => {
+    if (user) setForm({ ...user, dateOfBirth: normalizeDate(user.dateOfBirth) })
+  }, [user])
   const save = async (event: React.FormEvent) => {
     event.preventDefault()
-    await apiRequest('/auth/me', { method: 'PUT', body: JSON.stringify({ username: form.username, email: form.email, dateOfBirth: form.dateOfBirth, field: form.field, profileImage: form.profileImage }) })
-    updateCurrentUser(form)
+    await apiRequest('/auth/me', { method: 'PUT', body: JSON.stringify({ username: form.username, email: form.email, dateOfBirth: normalizeDate(form.dateOfBirth), field: form.field, profileImage: form.profileImage || null }) })
+    const savedUser = await apiRequest<ApiUser>('/auth/me')
+    updateCurrentUser({ ...savedUser, dateOfBirth: normalizeDate(savedUser.dateOfBirth) })
+    setForm({ ...savedUser, dateOfBirth: normalizeDate(savedUser.dateOfBirth) })
     setMessage(text.saved)
   }
   const upload = (event: React.ChangeEvent<HTMLInputElement>) => {
