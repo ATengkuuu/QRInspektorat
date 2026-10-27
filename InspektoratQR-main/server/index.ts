@@ -4,9 +4,10 @@ import express, { NextFunction, Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import mysql from 'mysql2/promise'
+import nodemailer from 'nodemailer'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 
 const app = express()
 const port = Number(process.env.API_PORT || 3001)
@@ -19,14 +20,40 @@ const pool = mysql.createPool({
   database: process.env.MYSQL_DATABASE || 'qr_inspektorat',
   connectionLimit: 10,
 })
+const mailTransport = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD
+  ? nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: Number(process.env.SMTP_PORT || 587),
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+    })
+  : null
 
 type AuthRequest = Request & { userId?: string }
 
 app.use(cors())
 app.use(express.json({ limit: '7mb' }))
 
+void pool.query(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id CHAR(36) NOT NULL PRIMARY KEY,
+    user_id CHAR(36) NOT NULL,
+    email VARCHAR(255) NOT NULL,
+    code_hash CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_reset_email_created (email, created_at)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+`).catch((error) => console.error('Password reset table initialization failed:', error))
+
 function tokenFor(id: string) {
   return jwt.sign({ userId: id }, jwtSecret, { expiresIn: '7d' })
+}
+
+function resetTokenFor(id: string) {
+  return jwt.sign({ userId: id, purpose: 'password-reset' }, jwtSecret, { expiresIn: '15m' })
 }
 
 async function logActivity(userId: string, action: 'add' | 'download_qr' | 'delete' | 'update', product: { id: string; name: string; location?: string; quantity?: number }) {
@@ -108,6 +135,79 @@ app.post('/api/auth/signin', async (request, response) => {
   }
 })
 
+app.post('/api/auth/password/forgot', async (request, response) => {
+  const email = String(request.body.email || '').trim().toLowerCase()
+  if (!email) {
+    response.status(400).json({ message: 'Email wajib diisi' })
+    return
+  }
+  if (!mailTransport) {
+    response.status(503).json({ message: 'Email OTP belum dikonfigurasi. Isi SMTP_HOST, SMTP_USER, dan SMTP_PASSWORD di file .env.' })
+    return
+  }
+  try {
+    const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username FROM users WHERE email = ?', [email])
+    if (!users[0]) {
+      response.status(404).json({ message: 'Email tidak ditemukan' })
+      return
+    }
+    const code = String(Math.floor(100000 + Math.random() * 900000))
+    const codeHash = createHash('sha256').update(code).digest('hex')
+    await pool.query('DELETE FROM password_reset_tokens WHERE user_id = ? OR expires_at < NOW()', [users[0].id])
+    await pool.query(
+      'INSERT INTO password_reset_tokens (id, user_id, email, code_hash, expires_at) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))',
+      [randomUUID(), users[0].id, email, codeHash],
+    )
+    await mailTransport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to: email,
+      subject: 'Kode OTP Reset Password QR Inspektorat',
+      text: `Kode OTP Anda adalah ${code}. Kode ini berlaku selama 10 menit.`,
+    })
+    response.json({ ok: true })
+  } catch (error) {
+    console.error('Password reset email failed:', error)
+    response.status(500).json({ message: 'OTP gagal dikirim. Periksa konfigurasi SMTP.' })
+  }
+})
+
+app.post('/api/auth/password/verify', async (request, response) => {
+  const email = String(request.body.email || '').trim().toLowerCase()
+  const code = String(request.body.code || '').trim()
+  const codeHash = createHash('sha256').update(code).digest('hex')
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    'SELECT id, user_id FROM password_reset_tokens WHERE email = ? AND code_hash = ? AND used_at IS NULL AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
+    [email, codeHash],
+  )
+  if (!rows[0]) {
+    response.status(400).json({ message: 'OTP salah atau sudah kedaluwarsa' })
+    return
+  }
+  await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = ?', [rows[0].id])
+  response.json({ resetToken: resetTokenFor(rows[0].user_id) })
+})
+
+app.post('/api/auth/password/reset', async (request, response) => {
+  const token = request.headers.authorization?.replace('Bearer ', '')
+  const password = String(request.body.password || '')
+  if (!token || password.length < 6) {
+    response.status(400).json({ message: 'Password minimal 6 karakter dan token reset wajib ada' })
+    return
+  }
+  try {
+    const payload = jwt.verify(token, jwtSecret) as { userId: string; purpose?: string }
+    if (payload.purpose !== 'password-reset') {
+      response.status(401).json({ message: 'Token reset tidak valid' })
+      return
+    }
+    const passwordHash = await bcrypt.hash(password, 12)
+    await pool.query('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [passwordHash, payload.userId])
+    response.json({ ok: true })
+  } catch {
+    response.status(401).json({ message: 'Token reset tidak valid atau sudah kedaluwarsa' })
+  }
+})
+
 app.get('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
   const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
   if (!rows[0]) {
@@ -120,7 +220,8 @@ app.get('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
 app.put('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
   const { username, email, dateOfBirth, field, profileImage } = request.body
   await pool.query('UPDATE users SET username = ?, email = ?, date_of_birth = ?, job_field = ?, profile_image = ? WHERE id = ?', [username, email, dateOfBirth || null, field || '', profileImage || null, request.userId])
-  response.json({ ok: true })
+  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
+  response.json({ id: rows[0].id, username: rows[0].username, email: rows[0].email, dateOfBirth: rows[0].date_of_birth, field: rows[0].job_field, profileImage: rows[0].profile_image })
 })
 
 app.get('/api/history', requireAuth, async (_request, response) => {

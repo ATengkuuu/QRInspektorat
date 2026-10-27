@@ -12,7 +12,12 @@ const labels = {
 
 const getLanguage = (): Language => localStorage.getItem('qr_language') === 'id' ? 'id' : 'en'
 const notifyPreferences = () => window.dispatchEvent(new Event('qr-preferences-change'))
-const normalizeDate = (value?: string) => value ? value.slice(0, 10) : ''
+const normalizeDate = (value?: string | Date) => {
+  if (!value) return ''
+  if (value instanceof Date) return value.toISOString().slice(0, 10)
+  const match = String(value).match(/^(\d{4}-\d{2}-\d{2})/)
+  return match ? match[1] : ''
+}
 
 const UserHero = ({ title, language, user }: { title: string; language: Language; user: ApiUser | null }) => {
   const navigate = useNavigate()

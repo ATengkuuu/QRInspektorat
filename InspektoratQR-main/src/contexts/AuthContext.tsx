@@ -50,16 +50,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(nextSession.user)
   }
 
-  const resetPassword = async (_email: string) => {
-    throw new Error('Reset password membutuhkan endpoint email backend.')
+  const resetPassword = async (email: string) => {
+    await apiRequest('/auth/password/forgot', { method: 'POST', body: JSON.stringify({ email }) })
   }
 
-  const verifyOtp = async (_email: string, _token: string) => {
-    throw new Error('Verifikasi OTP belum dikonfigurasi pada MySQL lokal.')
+  const verifyOtp = async (email: string, code: string) => {
+    const result = await apiRequest<{ resetToken: string }>('/auth/password/verify', { method: 'POST', body: JSON.stringify({ email, code }) })
+    localStorage.setItem('qr_reset_token', result.resetToken)
   }
 
-  const updatePassword = async (_password: string) => {
-    throw new Error('Update password belum dikonfigurasi pada MySQL lokal.')
+  const updatePassword = async (password: string) => {
+    const token = localStorage.getItem('qr_reset_token')
+    if (!token) throw new Error('Sesi reset password tidak ditemukan')
+    await apiRequest('/auth/password/reset', { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: JSON.stringify({ password }) })
+    localStorage.removeItem('qr_reset_token')
   }
 
   const signOut = async () => {
