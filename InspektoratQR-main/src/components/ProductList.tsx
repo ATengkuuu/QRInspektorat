@@ -137,6 +137,10 @@ const ProductList = () => {
     setShowQRModal(true);
   };
 
+  const productUrl = selectedProduct
+    ? `${import.meta.env.VITE_PUBLIC_APP_URL || window.location.origin}/product/${selectedProduct.id}`
+    : '';
+
   const recordQrDownload = async () => {
     if (!selectedProduct) return;
     await apiRequest('/history', {
@@ -176,6 +180,7 @@ const ProductList = () => {
         }
       });
     };
+
     img.src = "data:image/svg+xml;base64," + btoa(svgData);
     void recordQrDownload();
   };
@@ -320,7 +325,7 @@ const ProductList = () => {
             <div className="flex justify-center mb-4">
               <QRCodeSVG
                 id="product-qr"
-                value={`${window.location.origin}/product/${selectedProduct.id}`}
+                value={productUrl}
                 size={155}
                 level="H"
                 includeMargin={true}
