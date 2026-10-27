@@ -112,6 +112,15 @@ app.get('/api/products', requireAuth, async (_request, response) => {
   response.json(rows)
 })
 
+app.get('/api/products/:id', requireAuth, async (request, response) => {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT * FROM products WHERE id = ?', [request.params.id])
+  if (!rows[0]) {
+    response.status(404).json({ message: 'Produk tidak ditemukan' })
+    return
+  }
+  response.json(rows[0])
+})
+
 app.post('/api/products', requireAuth, async (request, response) => {
   const { id, name, location, quantity, image, timestamp } = request.body
   await pool.query('INSERT INTO products (id, name, location, quantity, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)', [id, name, location, quantity, image || null, timestamp])

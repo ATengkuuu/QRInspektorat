@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
-import { supabase } from '../lib/supabase';
+import { apiRequest } from '../lib/api';
 
 interface Product {
   id: string;
@@ -29,15 +29,7 @@ const ProductDetail = () => {
 
     try {
       setIsLoading(true);
-      const { data, error } = await supabase
-        .from('products')
-        .select('*')
-        .eq('id', id)
-        .single();
-
-      if (error) throw error;
-
-      setProduct(data);
+      setProduct(await apiRequest<Product>(`/products/${id}`));
     } catch (err) {
       setError('Failed to fetch product details');
       console.error('Error:', err);
