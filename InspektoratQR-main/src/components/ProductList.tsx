@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Save, Package, Trash2, QrCode, Squircle, Search } from "lucide-react";
+import { Save, Package, Trash2, QrCode, Check, Search } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { saveAs } from "file-saver";
 import ProductForm from "./ProductForm";
@@ -137,6 +137,20 @@ const ProductList = () => {
     setShowQRModal(true);
   };
 
+  const recordQrDownload = async () => {
+    if (!selectedProduct) return;
+    await apiRequest('/history', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'download_qr',
+        productId: selectedProduct.id,
+        productName: selectedProduct.name,
+        location: selectedProduct.location,
+        quantity: selectedProduct.quantity,
+      }),
+    });
+  };
+
   const downloadQR = () => {
     if (!selectedProduct) return;
 
@@ -163,6 +177,7 @@ const ProductList = () => {
       });
     };
     img.src = "data:image/svg+xml;base64," + btoa(svgData);
+    void recordQrDownload();
   };
 
   const filteredProducts = products.filter((product) =>
@@ -265,7 +280,7 @@ const ProductList = () => {
                     onClick={() => handleEdit(product)}
                     className="icon-action bg-green-500"
                   >
-                    <Squircle size={20} />
+                    <Check size={18} />
                   </button>
                   <button
                     onClick={() => handleDeleteClick(product)}

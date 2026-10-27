@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS products (
   name VARCHAR(255) NOT NULL,
   location VARCHAR(255) NOT NULL,
   quantity INT NOT NULL DEFAULT 0,
-  image TEXT NULL,
+  image LONGTEXT NULL,
   timestamp BIGINT NOT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -42,6 +42,11 @@ CREATE TABLE IF NOT EXISTS activity_logs (
   action ENUM('add', 'download_qr', 'delete', 'update') NOT NULL,
   product_id CHAR(36) NULL,
   product_name VARCHAR(255) NULL,
+  user_name VARCHAR(100) NULL,
+  user_field VARCHAR(150) NULL,
+  product_location VARCHAR(255) NULL,
+  product_quantity INT NULL,
+  details VARCHAR(500) NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_activity_user
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,

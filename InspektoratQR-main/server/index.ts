@@ -35,6 +35,15 @@ function requireAuth(request: AuthRequest, response: Response, next: NextFunctio
     response.status(401).json({ message: 'Authentication required' })
     return
   }
+
+  async function logActivity(userId: string, action: 'add' | 'download_qr' | 'delete' | 'update', product: { id: string; name: string; location?: string; quantity?: number }) {
+    const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT username, job_field FROM users WHERE id = ?', [userId])
+    const user = users[0]
+    await pool.query(
+      'INSERT INTO activity_logs (id, user_id, action, product_id, product_name, user_name, user_field, product_location, product_quantity, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [randomUUID(), userId, action, product.id, product.name, user?.username || 'Unknown', user?.job_field || '', product.location || '', product.quantity ?? null, `${action} product ${product.name}`],
+    )
+  }
   try {
     const payload = jwt.verify(token, jwtSecret) as { userId: string }
     request.userId = payload.userId
@@ -113,6 +122,21 @@ app.put('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
   response.json({ ok: true })
 })
 
+app.get('/api/history', requireAuth, async (_request, response) => {
+  const [rows] = await pool.query('SELECT id, action, product_id, product_name, user_name, user_field, product_location, product_quantity, details, created_at FROM activity_logs ORDER BY created_at DESC')
+  response.json(rows)
+})
+
+app.post('/api/history', requireAuth, async (request: AuthRequest, response) => {
+  const { action, productId, productName, location, quantity } = request.body
+  if (action !== 'download_qr' || !productId || !productName) {
+    response.status(400).json({ message: 'Data aktivitas tidak valid' })
+    return
+  }
+  await logActivity(request.userId!, action, { id: productId, name: productName, location, quantity })
+  response.status(201).json({ ok: true })
+})
+
 app.get('/api/products', requireAuth, async (_request, response) => {
   const [rows] = await pool.query('SELECT * FROM products ORDER BY timestamp DESC')
   response.json(rows)
@@ -127,20 +151,24 @@ app.get('/api/products/:id', requireAuth, async (request, response) => {
   response.json(rows[0])
 })
 
-app.post('/api/products', requireAuth, async (request, response) => {
+app.post('/api/products', requireAuth, async (request: AuthRequest, response) => {
   const { id, name, location, quantity, image, timestamp } = request.body
   await pool.query('INSERT INTO products (id, name, location, quantity, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)', [id, name, location, quantity, image || null, timestamp])
+  await logActivity(request.userId!, 'add', { id, name, location, quantity })
   response.status(201).json({ id, name, location, quantity, image, timestamp })
 })
 
-app.put('/api/products/:id', requireAuth, async (request, response) => {
+app.put('/api/products/:id', requireAuth, async (request: AuthRequest, response) => {
   const { name, location, quantity, image, timestamp } = request.body
   await pool.query('UPDATE products SET name = ?, location = ?, quantity = ?, image = ?, timestamp = ? WHERE id = ?', [name, location, quantity, image || null, timestamp, request.params.id])
+  await logActivity(request.userId!, 'update', { id: request.params.id, name, location, quantity })
   response.json({ ok: true })
 })
 
-app.delete('/api/products/:id', requireAuth, async (request, response) => {
+app.delete('/api/products/:id', requireAuth, async (request: AuthRequest, response) => {
+  const [products] = await pool.query<mysql.RowDataPacket[]>('SELECT name, location, quantity FROM products WHERE id = ?', [request.params.id])
   await pool.query('DELETE FROM products WHERE id = ?', [request.params.id])
+  if (products[0]) await logActivity(request.userId!, 'delete', { id: request.params.id, name: products[0].name, location: products[0].location, quantity: products[0].quantity })
   response.json({ ok: true })
 })
 

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowLeft, ChevronRight, Edit3, FilePlus2, Globe2, Trash2, UserRound } from 'lucide-react'
+import { ArrowLeft, Check, ChevronRight, Edit3, FilePlus2, Globe2, Trash2, UserRound } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { apiRequest, ApiUser } from '../lib/api'
@@ -86,9 +86,23 @@ const ProfileScreen = ({ language }: { language: Language }) => {
   )
 }
 
+interface Activity {
+  id: string
+  action: 'add' | 'download_qr' | 'delete' | 'update'
+  product_name: string
+  user_name: string
+  user_field: string
+  product_location: string
+  product_quantity: number | null
+  created_at: string
+}
+
 const HistoryScreen = ({ language }: { language: Language }) => {
   const text = labels[language]
-  return <><UserHero title={text.history} language={language} user={null} /><div className="user-panel history-panel"><div className="history-row"><FilePlus2 /><span>{language === 'id' ? 'Pengguna menambahkan [Nama Produk].' : 'User has added [Product Name].'}</span></div><div className="history-row"><Globe2 /><span>{language === 'id' ? 'Pengguna mengunduh QR [Nama Produk].' : 'User has downloaded the QR [Product Name].'}</span></div><div className="history-row"><Trash2 /><span>{language === 'id' ? 'Pengguna menghapus [Nama Produk].' : 'User has deleted [Product Name].'}</span></div></div></>
+  const [activities, setActivities] = useState<Activity[]>([])
+  useEffect(() => { apiRequest<Activity[]>('/history').then(setActivities).catch((error) => console.error('History load failed:', error)) }, [])
+  const actionText = (action: Activity['action']) => ({ add: language === 'id' ? 'menambahkan' : 'added', download_qr: language === 'id' ? 'mengunduh QR' : 'downloaded QR', delete: language === 'id' ? 'menghapus' : 'deleted', update: language === 'id' ? 'memperbarui' : 'updated' })[action]
+  return <><UserHero title={text.history} language={language} user={null} /><div className="user-panel history-panel">{activities.length === 0 ? <p className="history-empty">{language === 'id' ? 'Belum ada aktivitas.' : 'No activity yet.'}</p> : activities.map((activity) => <div className="history-row" key={activity.id}>{activity.action === 'delete' ? <Trash2 /> : activity.action === 'download_qr' ? <Globe2 /> : activity.action === 'update' ? <Check /> : <FilePlus2 />}<div><strong>{activity.user_name}</strong> {actionText(activity.action)} <strong>{activity.product_name}</strong><small>{activity.user_field} · {activity.product_location} · Qty {activity.product_quantity ?? '-'} · {new Date(activity.created_at).toLocaleString(language === 'id' ? 'id-ID' : 'en-US')}</small></div></div>)}</div></>
 }
 
 const LanguageScreen = ({ language, setLanguage }: { language: Language; setLanguage: (value: Language) => void }) => {
