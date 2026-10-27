@@ -29,6 +29,15 @@ function tokenFor(id: string) {
   return jwt.sign({ userId: id }, jwtSecret, { expiresIn: '7d' })
 }
 
+async function logActivity(userId: string, action: 'add' | 'download_qr' | 'delete' | 'update', product: { id: string; name: string; location?: string; quantity?: number }) {
+  const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT username, job_field FROM users WHERE id = ?', [userId])
+  const user = users[0]
+  await pool.query(
+    'INSERT INTO activity_logs (id, user_id, action, product_id, product_name, user_name, user_field, product_location, product_quantity, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [randomUUID(), userId, action, product.id, product.name, user?.username || 'Unknown', user?.job_field || '', product.location || '', product.quantity ?? null, `${action} product ${product.name}`],
+  )
+}
+
 function requireAuth(request: AuthRequest, response: Response, next: NextFunction) {
   const token = request.headers.authorization?.replace('Bearer ', '')
   if (!token) {
@@ -36,14 +45,6 @@ function requireAuth(request: AuthRequest, response: Response, next: NextFunctio
     return
   }
 
-  async function logActivity(userId: string, action: 'add' | 'download_qr' | 'delete' | 'update', product: { id: string; name: string; location?: string; quantity?: number }) {
-    const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT username, job_field FROM users WHERE id = ?', [userId])
-    const user = users[0]
-    await pool.query(
-      'INSERT INTO activity_logs (id, user_id, action, product_id, product_name, user_name, user_field, product_location, product_quantity, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [randomUUID(), userId, action, product.id, product.name, user?.username || 'Unknown', user?.job_field || '', product.location || '', product.quantity ?? null, `${action} product ${product.name}`],
-    )
-  }
   try {
     const payload = jwt.verify(token, jwtSecret) as { userId: string }
     request.userId = payload.userId
