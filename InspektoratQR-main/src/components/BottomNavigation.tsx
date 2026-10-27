@@ -1,22 +1,13 @@
-import { List, LogOut } from 'lucide-react';
+import { List, UserRound } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 
 const BottomNavigation = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { signOut, user } = useAuth();
+  const { user } = useAuth();
 
   const isActive = (path: string) => location.pathname === path;
-
-  const handleSignOut = async () => {
-    try {
-      await signOut();
-      navigate('/login');
-    } catch (error) {
-      console.error('Error signing out:', error);
-    }
-  };
 
   // Don't show navigation on login and signup pages
   if (['/login', '/signup', '/forgot-password', '/verify', '/reset-password'].includes(location.pathname)) {
@@ -38,11 +29,11 @@ const BottomNavigation = () => {
 
         {user && (
           <button
-            onClick={handleSignOut}
-            className="nav-item"
+            onClick={() => navigate('/user')}
+            className={`nav-item ${location.pathname.startsWith('/user') ? 'active' : ''}`}
           >
-            <LogOut size={24} />
-            <span>Sign Out</span>
+            <UserRound size={24} />
+            <span>User</span>
           </button>
         )}
       </div>

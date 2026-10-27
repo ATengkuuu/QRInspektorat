@@ -8,6 +8,7 @@ import LoginForm from './components/LoginForm'
 import AuthScreens from './components/AuthScreens'
 import ProtectedRoute from './components/ProtectedRoute'
 import { AuthProvider } from './contexts/AuthContext'
+import UserScreens from './components/UserScreens'
 
 function App() {
   return (
@@ -39,6 +40,10 @@ function App() {
                   </Layout>
                 </ProtectedRoute>
               }
+            />
+            <Route
+              path="/user/*"
+              element={<ProtectedRoute><Layout><UserScreens /></Layout></ProtectedRoute>}
             />
           </Routes>
           <BottomNavigation />

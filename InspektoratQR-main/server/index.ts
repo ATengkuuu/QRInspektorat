@@ -107,6 +107,12 @@ app.get('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
   response.json({ id: rows[0].id, username: rows[0].username, email: rows[0].email, dateOfBirth: rows[0].date_of_birth, field: rows[0].job_field })
 })
 
+app.put('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
+  const { username, email, dateOfBirth, field } = request.body
+  await pool.query('UPDATE users SET username = ?, email = ?, date_of_birth = ?, job_field = ? WHERE id = ?', [username, email, dateOfBirth || null, field || '', request.userId])
+  response.json({ ok: true })
+})
+
 app.get('/api/products', requireAuth, async (_request, response) => {
   const [rows] = await pool.query('SELECT * FROM products ORDER BY timestamp DESC')
   response.json(rows)
