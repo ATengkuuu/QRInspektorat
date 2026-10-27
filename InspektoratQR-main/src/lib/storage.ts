@@ -1,5 +1,3 @@
-import { supabase } from './supabase'
-
 export async function uploadImage(file: File): Promise<string | null> {
   try {
     if (!file) {
@@ -16,45 +14,15 @@ export async function uploadImage(file: File): Promise<string | null> {
       throw new Error('Invalid file type. Please upload an image.')
     }
 
-    const fileExt = file.name.split('.').pop()?.toLowerCase()
-    const validExtensions = ['jpg', 'jpeg', 'png', 'gif', 'webp']
-    
-    if (!fileExt || !validExtensions.includes(fileExt)) {
+    if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type)) {
       throw new Error('Invalid file type. Please upload a JPG, PNG, GIF, or WebP image.')
     }
-
-    // Create a unique filename with timestamp
-    const fileName = `${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`
-    const filePath = `${fileName}`
-
-    // Upload to 'image' bucket
-    const { data, error: uploadError } = await supabase.storage
-      .from('image')
-      .upload(filePath, file, {
-        cacheControl: '3600',
-        upsert: false,
-        contentType: file.type
-      })
-
-    if (uploadError) {
-      console.error('Upload error:', uploadError)
-      throw new Error('Failed to upload image')
-    }
-
-    if (!data) {
-      throw new Error('Upload successful but no data returned')
-    }
-
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('image')
-      .getPublicUrl(filePath)
-
-    if (!publicUrl) {
-      throw new Error('Failed to get public URL')
-    }
-
-    return publicUrl
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => reject(new Error('Failed to read image'))
+      reader.readAsDataURL(file)
+    })
   } catch (error) {
     console.error('Error in uploadImage:', error)
     throw error
@@ -62,23 +30,5 @@ export async function uploadImage(file: File): Promise<string | null> {
 }
 
 export async function deleteImage(url: string) {
-  try {
-    const path = url.split('/').pop()
-    if (!path) {
-      console.error('Invalid image URL')
-      return
-    }
-
-    const { error } = await supabase.storage
-      .from('image')
-      .remove([path])
-
-    if (error) {
-      console.error('Delete error:', error)
-      throw error
-    }
-  } catch (error) {
-    console.error('Error in deleteImage:', error)
-    throw error
-  }
+  return url
 }

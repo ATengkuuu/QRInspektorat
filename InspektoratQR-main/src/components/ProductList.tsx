@@ -4,8 +4,7 @@ import { QRCodeSVG } from "qrcode.react";
 import { saveAs } from "file-saver";
 import ProductForm from "./ProductForm";
 import DeleteConfirmationModal from "./DeleteConfirmationModal";
-import { supabase } from "../lib/supabase";
-import { deleteImage } from "../lib/storage";
+import { apiRequest } from "../lib/api";
 import { v4 as uuidv4 } from 'uuid'
 
 interface Product {
@@ -43,14 +42,7 @@ const ProductList = () => {
     try {
       setIsLoading(true);
       setError(null);
-      const { data, error: fetchError } = await supabase
-        .from("products")
-        .select("*")
-        .order("timestamp", { ascending: false });
-
-      if (fetchError) throw fetchError;
-
-      setProducts(data || []);
+      setProducts(await apiRequest<Product[]>("/products"));
     } catch (err) {
       console.error("Error fetching products:", err);
       setError("Failed to fetch products. Please try again.");
@@ -72,26 +64,24 @@ const ProductList = () => {
           editingProduct.image &&
           editingProduct.image !== productData.image
         ) {
-          await deleteImage(editingProduct.image);
         }
 
         // Update existing product
-        const { error: updateError } = await supabase
-          .from("products")
-          .update({
+        await apiRequest(`/products/${editingProduct.id}`, {
+          method: "PUT",
+          body: JSON.stringify({
             name: productData.name,
             location: productData.location,
             quantity: productData.quantity,
             image: productData.image, // Ensure image URL is included
             timestamp,
-          })
-          .eq("id", editingProduct.id);
-
-        if (updateError) throw updateError;
+          }),
+        });
       } else {
         // Add new product
-        const { error: insertError } = await supabase.from("products").insert([
-          {
+        await apiRequest("/products", {
+          method: "POST",
+          body: JSON.stringify({
             id: generateUUID(),
 
             name: productData.name,
@@ -99,10 +89,8 @@ const ProductList = () => {
             quantity: productData.quantity,
             image: productData.image, // Ensure image URL is included
             timestamp,
-          },
-        ]);
-
-        if (insertError) throw insertError;
+          }),
+        });
       }
 
       await fetchProducts(); // Refresh the list
@@ -126,15 +114,9 @@ const ProductList = () => {
       setError(null);
 
       if (productToDelete.image) {
-        await deleteImage(productToDelete.image);
       }
 
-      const { error: deleteError } = await supabase
-        .from("products")
-        .delete()
-        .eq("id", productToDelete.id);
-
-      if (deleteError) throw deleteError;
+      await apiRequest(`/products/${productToDelete.id}`, { method: "DELETE" });
 
       await fetchProducts(); // Refresh the list
       setShowDeleteModal(false);

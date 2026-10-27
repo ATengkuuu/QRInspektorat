@@ -54,7 +54,7 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
     try {
       if (mode === 'signup') {
         await signUp(email, password, { username, dateOfBirth, field })
-        navigate('/verify', { state: { email } })
+        navigate('/login', { state: { message: 'Akun berhasil dibuat. Silakan masuk.' } })
       } else if (mode === 'forgot') {
         await resetPassword(email)
         navigate('/verify', { state: { email, reset: true } })

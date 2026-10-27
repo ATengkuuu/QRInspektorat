@@ -1,10 +1,9 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { Session, User } from '@supabase/supabase-js'
-import { supabase } from '../lib/supabase'
+import { apiRequest, ApiSession, ApiUser } from '../lib/api'
 
 interface AuthContextType {
-  session: Session | null
-  user: User | null
+  session: ApiSession | null
+  user: ApiUser | null
   signIn: (email: string, password: string) => Promise<void>
   signUp: (email: string, password: string, profile?: { username: string; dateOfBirth: string; field: string }) => Promise<void>
   resetPassword: (email: string) => Promise<void>
@@ -17,91 +16,62 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null)
-  const [user, setUser] = useState<User | null>(null)
+  const [session, setSession] = useState<ApiSession | null>(null)
+  const [user, setUser] = useState<ApiUser | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session)
-      setUser(session?.user ?? null)
+    const token = localStorage.getItem('qr_token')
+    if (!token) {
       setLoading(false)
-    })
-
-    // Listen for auth changes
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
-      setUser(session?.user ?? null)
-    })
-
-    return () => subscription.unsubscribe()
+      return
+    }
+    apiRequest<ApiUser>('/auth/me')
+      .then((currentUser) => {
+        setUser(currentUser)
+        setSession({ token, user: currentUser })
+      })
+      .catch(() => localStorage.removeItem('qr_token'))
+      .finally(() => setLoading(false))
   }, [])
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    })
-    if (error) throw error
+    const nextSession = await apiRequest<ApiSession>('/auth/signin', { method: 'POST', body: JSON.stringify({ email, password }) })
+    localStorage.setItem('qr_token', nextSession.token)
+    setSession(nextSession)
+    setUser(nextSession.user)
   }
 
   const signUp = async (email: string, password: string, profile?: { username: string; dateOfBirth: string; field: string }) => {
-    const { error } = await supabase.auth.signUp({
-      email,
-      password,
-      options: profile ? { data: profile } : undefined,
-    })
-    if (error) throw error
+    const nextSession = await apiRequest<ApiSession>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password, ...profile }) })
+    localStorage.setItem('qr_token', nextSession.token)
+    setSession(nextSession)
+    setUser(nextSession.user)
   }
 
-  const resetPassword = async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    })
-    if (error) throw error
+  const resetPassword = async (_email: string) => {
+    throw new Error('Reset password membutuhkan endpoint email backend.')
   }
 
-  const verifyOtp = async (email: string, token: string) => {
-    const { error } = await supabase.auth.verifyOtp({ email, token, type: 'email' })
-    if (error) throw error
+  const verifyOtp = async (_email: string, _token: string) => {
+    throw new Error('Verifikasi OTP belum dikonfigurasi pada MySQL lokal.')
   }
 
-  const updatePassword = async (password: string) => {
-    const { error } = await supabase.auth.updateUser({ password })
-    if (error) throw error
+  const updatePassword = async (_password: string) => {
+    throw new Error('Update password belum dikonfigurasi pada MySQL lokal.')
   }
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut()
-    if (error) throw error
+    localStorage.removeItem('qr_token')
+    setSession(null)
+    setUser(null)
   }
 
-  return (
-    <AuthContext.Provider
-      value={{
-        session,
-        user,
-        signIn,
-        signUp,
-        resetPassword,
-        verifyOtp,
-        updatePassword,
-        signOut,
-        loading,
-      }}
-    >
-      {children}
-    </AuthContext.Provider>
-  )
+  return <AuthContext.Provider value={{ session, user, signIn, signUp, resetPassword, verifyOtp, updatePassword, signOut, loading }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {
   const context = useContext(AuthContext)
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider')
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider')
   return context
 }
