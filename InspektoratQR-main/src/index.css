@@ -430,6 +430,10 @@ img {
   font-size: 9px;
 }
 
+.search-input {
+  padding-left: 38px;
+}
+
 .mock-input:focus,
 .auth-input:focus {
   border-color: #2298ed;

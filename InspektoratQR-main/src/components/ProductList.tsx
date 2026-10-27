@@ -180,9 +180,12 @@ const ProductList = () => {
     void recordQrDownload();
   };
 
-  const filteredProducts = products.filter((product) =>
-    product.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const normalizedQuery = searchQuery.trim().toLocaleLowerCase();
+  const filteredProducts = products.filter((product) => {
+    if (!normalizedQuery) return true;
+    const name = product.name.trim().toLocaleLowerCase();
+    return name.includes(normalizedQuery) || normalizedQuery.split(/\s+/).every((part) => name.includes(part));
+  });
 
   if (isLoading) {
     return (
@@ -211,7 +214,7 @@ const ProductList = () => {
           placeholder="Search..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="mock-input w-full pl-8"
+          className="mock-input search-input w-full"
         />
       </div>
 

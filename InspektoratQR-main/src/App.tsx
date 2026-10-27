@@ -37,13 +37,7 @@ function App() {
             />
             <Route
               path="/product/:id"
-              element={
-                <ProtectedRoute>
-                  <Layout>
-                    <ProductDetail />
-                  </Layout>
-                </ProtectedRoute>
-              }
+              element={<Layout><ProductDetail /></Layout>}
             />
             <Route
               path="/user/*"

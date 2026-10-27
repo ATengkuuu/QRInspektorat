@@ -10,6 +10,8 @@ interface Product {
   quantity: number;
   image: string;
   timestamp: number;
+  added_by?: string;
+  added_at?: string;
 }
 
 const ProductDetail = () => {
@@ -29,7 +31,7 @@ const ProductDetail = () => {
 
     try {
       setIsLoading(true);
-      setProduct(await apiRequest<Product>(`/products/${id}`));
+      setProduct(await apiRequest<Product>(`/products/${id}/public`));
     } catch (err) {
       setError('Failed to fetch product details');
       console.error('Error:', err);
@@ -115,6 +117,13 @@ const ProductDetail = () => {
             <p className="text-gray-600">
               <span className="font-semibold">Last Updated:</span>{' '}
               {new Date(product.timestamp).toLocaleDateString()}
+            </p>
+            <p className="text-gray-600">
+              <span className="font-semibold">Added By:</span> {product.added_by || '-'}
+            </p>
+            <p className="text-gray-600">
+              <span className="font-semibold">Added Date:</span>{' '}
+              {product.added_at ? new Date(product.added_at).toLocaleString() : '-'}
             </p>
           </div>
         </div>

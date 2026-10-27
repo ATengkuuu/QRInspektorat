@@ -253,6 +253,27 @@ app.get('/api/products/:id', requireAuth, async (request, response) => {
   response.json(rows[0])
 })
 
+app.get('/api/products/:id/public', async (request, response) => {
+  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+    `SELECT p.*, added.user_name AS added_by, added.created_at AS added_at
+     FROM products p
+     LEFT JOIN (
+       SELECT product_id, user_name, created_at
+       FROM activity_logs
+       WHERE action = 'add'
+       ORDER BY created_at ASC
+     ) added ON added.product_id = p.id
+     WHERE p.id = ?
+     LIMIT 1`,
+    [request.params.id],
+  )
+  if (!rows[0]) {
+    response.status(404).json({ message: 'Produk tidak ditemukan' })
+    return
+  }
+  response.json(rows[0])
+})
+
 app.post('/api/products', requireAuth, async (request: AuthRequest, response) => {
   const { id, name, location, quantity, image, timestamp } = request.body
   await pool.query('INSERT INTO products (id, name, location, quantity, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)', [id, name, location, quantity, image || null, timestamp])
