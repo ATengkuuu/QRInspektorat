@@ -91,7 +91,7 @@ body {
 }
 
 .dark-mode .user-hero {
-  background: linear-gradient(to bottom, rgba(32,33,36,.08) 0%, rgba(32,33,36,.24) 45%, #202124 100%), url("/gedunginspektorat.png") center bottom / cover no-repeat;
+  background: linear-gradient(to bottom, rgba(32,33,36,.06) 0%, rgba(32,33,36,.18) 48%, #202124 100%), url("/gedunginspektorat.png") center -150px / 120% auto no-repeat;
 }
 
 .dark-mode .user-section-label,
@@ -196,7 +196,7 @@ img {
   min-height: 170px;
   padding: 14px 12px;
   overflow: hidden;
-  background: linear-gradient(to bottom, rgba(255,255,255,.08) 0%, rgba(255,255,255,.18) 45%, #fff 100%), url("/gedunginspektorat.png") center bottom / cover no-repeat;
+  background: linear-gradient(to bottom, rgba(255,255,255,.04) 0%, rgba(255,255,255,.12) 48%, #fff 100%), url("/gedunginspektorat.png") center -150px / 120% auto no-repeat;
 }
 
 .user-hero h1 {
@@ -544,8 +544,8 @@ img {
   padding: 30vh 12px 30px;
   background-color: #fff;
   background-image: url("/gedunginspektorat.png");
-  background-position: center -72px;
-  background-size: 140% auto;
+  background-position: center -150px;
+  background-size: 120% auto;
   background-repeat: no-repeat;
 }
 
