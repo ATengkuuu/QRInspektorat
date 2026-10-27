@@ -1,11 +1,14 @@
 import { List, UserRound } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
+import { useEffect, useState } from 'react';
 
 const BottomNavigation = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
+  const [indonesian, setIndonesian] = useState(localStorage.getItem('qr_language') === 'id')
+  useEffect(() => { const update = () => setIndonesian(localStorage.getItem('qr_language') === 'id'); window.addEventListener('qr-preferences-change', update); return () => window.removeEventListener('qr-preferences-change', update) }, [])
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -19,12 +22,10 @@ const BottomNavigation = () => {
       <div className="bottom-nav-inner">
         <button
           onClick={() => navigate('/')}
-          className={`nav-item ${
-            isActive('/') ? 'active' : ''
-          }`}
+          className={`nav-item ${isActive('/') ? 'active' : ''}`}
         >
           <List size={24} />
-          <span>Product</span>
+          <span>{indonesian ? 'Produk' : 'Product'}</span>
         </button>
 
         {user && (
@@ -33,7 +34,7 @@ const BottomNavigation = () => {
             className={`nav-item ${location.pathname.startsWith('/user') ? 'active' : ''}`}
           >
             <UserRound size={24} />
-            <span>User</span>
+            <span>{indonesian ? 'Pengguna' : 'User'}</span>
           </button>
         )}
       </div>

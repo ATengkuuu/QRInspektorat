@@ -74,7 +74,7 @@ app.post('/api/auth/signup', async (request, response) => {
     )
     response.status(201).json({
       token: tokenFor(id),
-      user: { id, username, email, dateOfBirth, field },
+      user: { id, username, email, dateOfBirth, field, profileImage: null },
     })
   } catch (error) {
     console.error('Signup failed:', error)
@@ -91,7 +91,7 @@ app.post('/api/auth/signin', async (request, response) => {
       response.status(401).json({ message: 'Email atau password salah' })
       return
     }
-    response.json({ token: tokenFor(user.id), user: { id: user.id, username: user.username, email: user.email, dateOfBirth: user.date_of_birth, field: user.job_field } })
+    response.json({ token: tokenFor(user.id), user: { id: user.id, username: user.username, email: user.email, dateOfBirth: user.date_of_birth, field: user.job_field, profileImage: user.profile_image } })
   } catch (error) {
     console.error('Signin failed:', error)
     response.status(500).json({ message: 'Login gagal karena database tidak dapat diproses' })
@@ -99,17 +99,17 @@ app.post('/api/auth/signin', async (request, response) => {
 })
 
 app.get('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, date_of_birth, job_field FROM users WHERE id = ?', [request.userId])
+  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
   if (!rows[0]) {
     response.status(404).json({ message: 'User tidak ditemukan' })
     return
   }
-  response.json({ id: rows[0].id, username: rows[0].username, email: rows[0].email, dateOfBirth: rows[0].date_of_birth, field: rows[0].job_field })
+  response.json({ id: rows[0].id, username: rows[0].username, email: rows[0].email, dateOfBirth: rows[0].date_of_birth, field: rows[0].job_field, profileImage: rows[0].profile_image })
 })
 
 app.put('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
-  const { username, email, dateOfBirth, field } = request.body
-  await pool.query('UPDATE users SET username = ?, email = ?, date_of_birth = ?, job_field = ? WHERE id = ?', [username, email, dateOfBirth || null, field || '', request.userId])
+  const { username, email, dateOfBirth, field, profileImage } = request.body
+  await pool.query('UPDATE users SET username = ?, email = ?, date_of_birth = ?, job_field = ?, profile_image = ? WHERE id = ?', [username, email, dateOfBirth || null, field || '', profileImage || null, request.userId])
   response.json({ ok: true })
 })
 

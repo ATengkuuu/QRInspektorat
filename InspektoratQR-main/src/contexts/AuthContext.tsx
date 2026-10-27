@@ -10,6 +10,7 @@ interface AuthContextType {
   verifyOtp: (email: string, token: string) => Promise<void>
   updatePassword: (password: string) => Promise<void>
   signOut: () => Promise<void>
+  updateCurrentUser: (user: ApiUser) => void
   loading: boolean
 }
 
@@ -67,7 +68,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null)
   }
 
-  return <AuthContext.Provider value={{ session, user, signIn, signUp, resetPassword, verifyOtp, updatePassword, signOut, loading }}>{children}</AuthContext.Provider>
+  const updateCurrentUser = (nextUser: ApiUser) => {
+    setUser(nextUser)
+    if (session) setSession({ ...session, user: nextUser })
+  }
+
+  return <AuthContext.Provider value={{ session, user, signIn, signUp, resetPassword, verifyOtp, updatePassword, signOut, updateCurrentUser, loading }}>{children}</AuthContext.Provider>
 }
 
 export function useAuth() {

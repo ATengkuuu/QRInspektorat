@@ -9,8 +9,12 @@ import AuthScreens from './components/AuthScreens'
 import ProtectedRoute from './components/ProtectedRoute'
 import { AuthProvider } from './contexts/AuthContext'
 import UserScreens from './components/UserScreens'
+import { useEffect } from 'react'
 
 function App() {
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark-mode', localStorage.getItem('qr_dark_mode') === 'true')
+  }, [])
   return (
     <AuthProvider>
       <BrowserRouter>

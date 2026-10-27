@@ -12,9 +12,42 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+.user-avatar img,
+.profile-upload-preview img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
+}
+
+.profile-upload {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #777;
+  font-size: 7px;
+  cursor: pointer;
+}
+
+.profile-upload input {
+  display: none;
+}
+
+.profile-upload-preview {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #c8c8c8;
+  border-radius: 9px;
+  background: #fff;
+  color: #8e8e93;
 }
 
 html,
@@ -24,10 +57,57 @@ body,
   margin: 0;
 }
 
+.toggle:not(.on) {
+  background: #c8c8c8;
+}
+
+.toggle:not(.on) i {
+  margin-left: 0;
+}
+
 body {
   min-height: 100vh;
   background: #414141;
   overscroll-behavior-y: none;
+}
+
+.dark-mode body,
+.dark-mode .app-shell {
+  background: #202124;
+  color: #f5f5f5;
+}
+
+.dark-mode .bottom-nav,
+.dark-mode .user-panel,
+.dark-mode .product-card,
+.dark-mode .modal-card,
+.dark-mode .user-menu-row,
+.dark-mode .language-panel label,
+.dark-mode .user-input-wrap,
+.dark-mode .profile-upload-preview {
+  border-color: #444;
+  background: #2b2d31;
+  color: #f5f5f5;
+}
+
+.dark-mode .user-hero {
+  background: linear-gradient(to bottom, rgba(32,33,36,.12), #202124 96%), url("/gedunginspektorat.png") center top / 100% auto no-repeat;
+}
+
+.dark-mode .user-section-label,
+.dark-mode .language-panel > p,
+.dark-mode .profile-form label,
+.dark-mode .history-row,
+.dark-mode .nav-item {
+  color: #c8c8c8;
+}
+
+.dark-mode .user-input-wrap input,
+.dark-mode .mock-input,
+.dark-mode .auth-input {
+  border-color: #555;
+  background: #202124;
+  color: #f5f5f5;
 }
 
 button,
@@ -111,6 +191,7 @@ img {
   position: relative;
   min-height: 170px;
   padding: 14px 12px;
+  overflow: hidden;
   background: linear-gradient(to bottom, rgba(255,255,255,.1), #fff 96%), url("/gedunginspektorat.png") center top / 100% auto no-repeat;
 }
 
@@ -303,7 +384,9 @@ img {
 }
 
 .nav-item.active {
-  color: #757575;
+  color: #242424;
+  font-weight: 700;
+  background: #f0f0f0;
 }
 
 .mock-input {

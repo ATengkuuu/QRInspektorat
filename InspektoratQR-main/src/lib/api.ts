@@ -6,6 +6,7 @@ export interface ApiUser {
   email: string
   dateOfBirth?: string
   field?: string
+  profileImage?: string
 }
 
 export interface ApiSession {
