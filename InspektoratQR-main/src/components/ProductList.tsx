@@ -189,8 +189,8 @@ const ProductList = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      <div className="page-pad flex min-h-screen items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-blue-500 border-t-transparent"></div>
       </div>
     );
   }
@@ -200,8 +200,8 @@ const ProductList = () => {
       <h1 className="text-[11px] font-bold mb-2">Product List</h1>
 
       {error && (
-        <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-          <p className="text-red-600">{error}</p>
+        <div className="auth-message error">
+          <p>{error}</p>
         </div>
       )}
 
@@ -227,20 +227,20 @@ const ProductList = () => {
       </button>
 
       {filteredProducts.length === 0 ? (
-        <div className="text-center py-12 px-4">
+        <div className="px-4 py-16 text-center text-gray-500">
           {products.length === 0 ? (
             <>
-              <Package size={64} className="mx-auto text-gray-400 mb-4" />
-              <h2 className="text-xl font-semibold mb-2">No Products Yet</h2>
-              <p className="text-gray-600">
+              <Package size={48} className="mx-auto mb-3 text-gray-400" />
+              <h2 className="mb-1 text-[11px] font-semibold">No Products Yet</h2>
+              <p className="text-[9px] text-gray-500">
                 Start by adding your first product using the button above.
               </p>
             </>
           ) : (
             <>
-              <Search size={64} className="mx-auto text-gray-400 mb-4" />
-              <h2 className="text-xl font-semibold mb-2">No Products Found</h2>
-              <p className="text-gray-600">Try adjusting your search query.</p>
+              <Search size={48} className="mx-auto mb-3 text-gray-400" />
+              <h2 className="mb-1 text-[11px] font-semibold">No Products Found</h2>
+              <p className="text-[9px] text-gray-500">Try adjusting your search query.</p>
 
 
             </>

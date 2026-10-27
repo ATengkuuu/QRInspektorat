@@ -26,11 +26,15 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
   const location = useLocation()
   const { signUp, resetPassword, verifyOtp, updatePassword } = useAuth()
   const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
+  const [dateOfBirth, setDateOfBirth] = useState('')
+  const [field, setField] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
   const [code, setCode] = useState('')
   const [remember, setRemember] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmation, setShowConfirmation] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
@@ -41,7 +45,7 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
     setError('')
     setMessage('')
 
-    if (mode === 'reset' && password !== confirmation) {
+    if ((mode === 'signup' || mode === 'reset') && password !== confirmation) {
       setError('Passwords do not match')
       return
     }
@@ -49,7 +53,7 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
     setIsLoading(true)
     try {
       if (mode === 'signup') {
-        await signUp(email, password)
+        await signUp(email, password, { username, dateOfBirth, field })
         navigate('/verify', { state: { email } })
       } else if (mode === 'forgot') {
         await resetPassword(email)
@@ -96,7 +100,15 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
         {message && <p className="auth-message success">{message}</p>}
 
         <form onSubmit={submit} className="auth-form">
-          {(mode === 'signup' || mode === 'forgot') && (
+          {mode === 'signup' && (
+            <>
+              <input className="auth-input auth-input-plain" type="text" required value={username} onChange={(event) => setUsername(event.target.value)} placeholder="Username" />
+              <input className="auth-input auth-input-plain" type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email Address" />
+              <input className="auth-input auth-input-plain" type="text" required value={dateOfBirth} onChange={(event) => setDateOfBirth(event.target.value)} placeholder="Date Of Birth" onFocus={(event) => { event.currentTarget.type = 'date' }} onBlur={(event) => { if (!event.currentTarget.value) event.currentTarget.type = 'text' }} />
+              <input className="auth-input auth-input-plain" type="text" required value={field} onChange={(event) => setField(event.target.value)} placeholder="Field" />
+            </>
+          )}
+          {mode === 'forgot' && (
             <input className="auth-input auth-input-plain" type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email Address" />
           )}
           {mode === 'verify' && (
@@ -105,7 +117,7 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
           {isPasswordMode && (
             <div className="auth-password-field">
               <Lock className="auth-icon" />
-              <input className="auth-input" type={showPassword ? 'text' : 'password'} required minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="New Password" />
+              <input className="auth-input" type={showPassword ? 'text' : 'password'} required minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === 'signup' ? 'Password' : 'New Password'} />
               <button type="button" className="password-toggle" onClick={() => setShowPassword((visible) => !visible)} aria-label="Show password">
                 {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
@@ -114,7 +126,10 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
           {mode === 'signup' && (
             <div className="auth-password-field">
               <Lock className="auth-icon" />
-              <input className="auth-input" type="password" required minLength={6} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="Confirm Password" />
+              <input className="auth-input" type={showConfirmation ? 'text' : 'password'} required minLength={6} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="Confirm Password" />
+              <button type="button" className="password-toggle" onClick={() => setShowConfirmation((visible) => !visible)} aria-label={showConfirmation ? 'Hide confirmation password' : 'Show confirmation password'}>
+                {showConfirmation ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
             </div>
           )}
           {mode === 'reset' && (
