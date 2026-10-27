@@ -122,7 +122,7 @@ app.post('/api/auth/signup', async (request, response) => {
 app.post('/api/auth/signin', async (request, response) => {
   const { email, password } = request.body
   try {
-    const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT * FROM users WHERE email = ?', [email])
+    const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, password_hash, DATE_FORMAT(date_of_birth, "%Y-%m-%d") AS date_of_birth, job_field, profile_image FROM users WHERE email = ?', [email])
     const user = rows[0]
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       response.status(401).json({ message: 'Email atau password salah' })
@@ -209,7 +209,7 @@ app.post('/api/auth/password/reset', async (request, response) => {
 })
 
 app.get('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
+  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, DATE_FORMAT(date_of_birth, "%Y-%m-%d") AS date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
   if (!rows[0]) {
     response.status(404).json({ message: 'User tidak ditemukan' })
     return
@@ -220,7 +220,7 @@ app.get('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
 app.put('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
   const { username, email, dateOfBirth, field, profileImage } = request.body
   await pool.query('UPDATE users SET username = ?, email = ?, date_of_birth = ?, job_field = ?, profile_image = ? WHERE id = ?', [username, email, dateOfBirth || null, field || '', profileImage || null, request.userId])
-  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
+  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, DATE_FORMAT(date_of_birth, "%Y-%m-%d") AS date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
   response.json({ id: rows[0].id, username: rows[0].username, email: rows[0].email, dateOfBirth: rows[0].date_of_birth, field: rows[0].job_field, profileImage: rows[0].profile_image })
 })
 
