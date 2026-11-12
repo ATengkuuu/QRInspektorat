@@ -3,64 +3,160 @@ import cors from 'cors'
 import express, { NextFunction, Request, Response } from 'express'
 import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
-import mysql from 'mysql2/promise'
+import { Pool, PoolClient } from 'pg'
 import nodemailer from 'nodemailer'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { createHash, randomUUID } from 'node:crypto'
 
+const isProduction = process.env.NODE_ENV === 'production'
+function requiredEnvironment(name: string): string {
+  const value = process.env[name]
+  if (!value) throw new Error(`${name} is required`)
+  return value
+}
+
+const databaseUrl = requiredEnvironment('DATABASE_URL')
 const app = express()
 const port = Number(process.env.API_PORT || 3001)
-const jwtSecret = process.env.JWT_SECRET || 'qr-inspektorat-local-secret'
-const pool = mysql.createPool({
-  host: process.env.MYSQL_HOST || '127.0.0.1',
-  port: Number(process.env.MYSQL_PORT || 3306),
-  user: process.env.MYSQL_USER || 'root',
-  password: process.env.MYSQL_PASSWORD || '',
-  database: process.env.MYSQL_DATABASE || 'qr_inspektorat',
-  connectionLimit: 10,
+const jwtSecret = requiredEnvironment('JWT_SECRET')
+if (isProduction && (jwtSecret.length < 32 || jwtSecret.toLowerCase().includes('change-me') || jwtSecret.toLowerCase().includes('placeholder'))) {
+  throw new Error('JWT_SECRET must be a strong non-placeholder value in production')
+}
+
+const databaseSsl = process.env.DATABASE_SSL !== 'false'
+const pool = new Pool({
+  connectionString: databaseUrl,
+  max: Number(process.env.DATABASE_POOL_MAX || 5),
+  connectionTimeoutMillis: 10000,
+  idleTimeoutMillis: 30000,
+  ssl: databaseSsl ? { rejectUnauthorized: false } : undefined,
 })
-const mailTransport = process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASSWORD
+
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true)
+      return
+    }
+    callback(new Error('Origin is not allowed by CORS'))
+  },
+}))
+app.use(express.json({ limit: '7mb' }))
+
+const smtpPassword = process.env.SMTP_PASSWORD
+const mailTransport = process.env.SMTP_HOST && process.env.SMTP_USER && smtpPassword
   ? nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT || 587),
       secure: process.env.SMTP_SECURE === 'true',
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+      auth: { user: process.env.SMTP_USER, pass: smtpPassword },
     })
   : null
+const resetRequestWindowMs = 15 * 60 * 1000
+const resetRequestLimit = 3
+const resetRequestHistory = new Map<string, number[]>()
 
 type AuthRequest = Request & { userId?: string }
+type UserRow = {
+  id: string
+  username: string
+  email: string
+  password_hash?: string
+  date_of_birth: string | null
+  job_field: string
+  profile_image: string | null
+}
+type ProductRow = {
+  id: string
+  name: string
+  location: string
+  quantity: number
+  image: string | null
+  timestamp: number
+}
 
-app.use(cors())
-app.use(express.json({ limit: '7mb' }))
+function nonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
 
-void pool.query(`
-  CREATE TABLE IF NOT EXISTS password_reset_tokens (
-    id CHAR(36) NOT NULL PRIMARY KEY,
-    user_id CHAR(36) NOT NULL,
-    email VARCHAR(255) NOT NULL,
-    code_hash CHAR(64) NOT NULL,
-    expires_at DATETIME NOT NULL,
-    used_at DATETIME NULL,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_reset_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    INDEX idx_reset_email_created (email, created_at)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-`).catch((error) => console.error('Password reset table initialization failed:', error))
+function validUuid(value: unknown): value is string {
+  return typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
+
+function validEmail(value: unknown): value is string {
+  return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+}
+
+function validDate(value: unknown): value is string {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(Date.parse(`${value}T00:00:00Z`))
+}
+
+function validQuantity(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0
+}
+
+function validTimestamp(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505'
+}
+
+function isResetRateLimited(key: string, now = Date.now()): boolean {
+  const recentRequests = (resetRequestHistory.get(key) || []).filter((timestamp) => now - timestamp < resetRequestWindowMs)
+  if (recentRequests.length >= resetRequestLimit) {
+    resetRequestHistory.set(key, recentRequests)
+    return true
+  }
+  recentRequests.push(now)
+  resetRequestHistory.set(key, recentRequests)
+  return false
+}
+
+function userResponse(user: UserRow) {
+  return {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    dateOfBirth: user.date_of_birth,
+    field: user.job_field,
+    profileImage: user.profile_image,
+  }
+}
 
 function tokenFor(id: string) {
   return jwt.sign({ userId: id }, jwtSecret, { expiresIn: '7d' })
 }
 
-function resetTokenFor(id: string) {
-  return jwt.sign({ userId: id, purpose: 'password-reset' }, jwtSecret, { expiresIn: '15m' })
+function resetTokenFor(userId: string, tokenId: string) {
+  return jwt.sign({ userId, purpose: 'password-reset' }, jwtSecret, { expiresIn: '15m', jwtid: tokenId })
 }
 
-async function logActivity(userId: string, action: 'add' | 'download_qr' | 'delete' | 'update', product: { id: string; name: string; location?: string; quantity?: number }) {
-  const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT username, job_field FROM users WHERE id = ?', [userId])
-  const user = users[0]
-  await pool.query(
-    'INSERT INTO activity_logs (id, user_id, action, product_id, product_name, user_name, user_field, product_location, product_quantity, details) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+function verifiedPayload(token: string): { userId: string; purpose?: string; jti?: string } {
+  const payload = jwt.verify(token, jwtSecret)
+  if (typeof payload === 'string' || typeof payload.userId !== 'string') {
+    throw new Error('Invalid JWT payload')
+  }
+  return {
+    userId: payload.userId,
+    purpose: typeof payload.purpose === 'string' ? payload.purpose : undefined,
+    jti: typeof payload.jti === 'string' ? payload.jti : undefined,
+  }
+}
+
+async function logActivity(client: PoolClient, userId: string, action: 'add' | 'download_qr' | 'delete' | 'update', product: { id: string; name: string; location?: string; quantity?: number }) {
+  const userResult = await client.query<{ username: string; job_field: string }>(
+    'SELECT username, job_field FROM users WHERE id = $1',
+    [userId],
+  )
+  const user = userResult.rows[0]
+  await client.query(
+    'INSERT INTO activity_logs (id, user_id, action, product_id, product_name, user_name, user_field, product_location, product_quantity, details) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)',
     [randomUUID(), userId, action, product.id, product.name, user?.username || 'Unknown', user?.job_field || '', product.location || '', product.quantity ?? null, `${action} product ${product.name}`],
   )
 }
@@ -71,9 +167,12 @@ function requireAuth(request: AuthRequest, response: Response, next: NextFunctio
     response.status(401).json({ message: 'Authentication required' })
     return
   }
-
   try {
-    const payload = jwt.verify(token, jwtSecret) as { userId: string }
+    const payload = verifiedPayload(token)
+    if (payload.purpose !== undefined) {
+      response.status(401).json({ message: 'Invalid or expired session' })
+      return
+    }
     request.userId = payload.userId
     next()
   } catch {
@@ -83,8 +182,8 @@ function requireAuth(request: AuthRequest, response: Response, next: NextFunctio
 
 app.get('/api/health', async (_request, response) => {
   try {
-    await pool.query('SELECT 1')
-    response.json({ ok: true, database: process.env.MYSQL_DATABASE || 'qr_inspektorat' })
+    await pool.query('SELECT 1 AS result')
+    response.json({ ok: true, database: 'supabase-postgresql' })
   } catch (error) {
     console.error('Database health check failed:', error)
     response.status(503).json({ message: 'Database connection failed' })
@@ -93,42 +192,61 @@ app.get('/api/health', async (_request, response) => {
 
 app.post('/api/auth/signup', async (request, response) => {
   const { username, email, password, dateOfBirth, field } = request.body
-  if (!username || !email || !password || !dateOfBirth || !field || password.length < 6) {
+  if (!nonEmptyString(username) || !validEmail(email) || typeof password !== 'string' || password.length < 6 || !validDate(dateOfBirth) || !nonEmptyString(field)) {
     response.status(400).json({ message: 'Semua field wajib diisi dan password minimal 6 karakter' })
     return
   }
   try {
-    const [existing] = await pool.query<mysql.RowDataPacket[]>('SELECT id FROM users WHERE email = ?', [email])
-    if (existing.length) {
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const existing = await client.query<{ id: string }>('SELECT id FROM users WHERE email = $1', [email])
+      if (existing.rowCount) {
+        await client.query('ROLLBACK')
+        response.status(409).json({ message: 'Email sudah terdaftar' })
+        return
+      }
+      const id = randomUUID()
+      const passwordHash = await bcrypt.hash(password, 12)
+      await client.query(
+        'INSERT INTO users (id, username, email, password_hash, date_of_birth, job_field) VALUES ($1, $2, $3, $4, $5, $6)',
+        [id, username, email, passwordHash, dateOfBirth, field],
+      )
+      await client.query('COMMIT')
+      response.status(201).json({ token: tokenFor(id), user: { id, username, email, dateOfBirth, field, profileImage: null } })
+    } catch (error) {
+      await client.query('ROLLBACK').catch((rollbackError) => console.error('Signup rollback failed:', rollbackError))
+      throw error
+    } finally {
+      client.release()
+    }
+  } catch (error) {
+    console.error('Signup failed:', error)
+    if (isUniqueViolation(error)) {
       response.status(409).json({ message: 'Email sudah terdaftar' })
       return
     }
-    const id = randomUUID()
-    const passwordHash = await bcrypt.hash(password, 12)
-    await pool.query(
-      'INSERT INTO users (id, username, email, password_hash, date_of_birth, job_field) VALUES (?, ?, ?, ?, ?, ?)',
-      [id, username, email, passwordHash, dateOfBirth, field],
-    )
-    response.status(201).json({
-      token: tokenFor(id),
-      user: { id, username, email, dateOfBirth, field, profileImage: null },
-    })
-  } catch (error) {
-    console.error('Signup failed:', error)
     response.status(500).json({ message: 'Pendaftaran gagal karena database tidak dapat diproses' })
   }
 })
 
 app.post('/api/auth/signin', async (request, response) => {
   const { email, password } = request.body
+  if (!validEmail(email) || typeof password !== 'string' || password.length === 0) {
+    response.status(400).json({ message: 'Email dan password wajib diisi' })
+    return
+  }
   try {
-    const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, password_hash, DATE_FORMAT(date_of_birth, "%Y-%m-%d") AS date_of_birth, job_field, profile_image FROM users WHERE email = ?', [email])
-    const user = rows[0]
-    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+    const result = await pool.query<UserRow>(
+      'SELECT id, username, email, password_hash, to_char(date_of_birth, \'YYYY-MM-DD\') AS date_of_birth, job_field, profile_image FROM users WHERE email = $1',
+      [email],
+    )
+    const user = result.rows[0]
+    if (!user || !user.password_hash || !(await bcrypt.compare(password, user.password_hash))) {
       response.status(401).json({ message: 'Email atau password salah' })
       return
     }
-    response.json({ token: tokenFor(user.id), user: { id: user.id, username: user.username, email: user.email, dateOfBirth: user.date_of_birth, field: user.job_field, profileImage: user.profile_image } })
+    response.json({ token: tokenFor(user.id), user: userResponse(user) })
   } catch (error) {
     console.error('Signin failed:', error)
     response.status(500).json({ message: 'Login gagal karena database tidak dapat diproses' })
@@ -141,29 +259,46 @@ app.post('/api/auth/password/forgot', async (request, response) => {
     response.status(400).json({ message: 'Email wajib diisi' })
     return
   }
+  const ipKey = request.ip || request.socket.remoteAddress || 'unknown'
+  const emailKey = `email:${email}`
+  const ipRateLimitKey = `ip:${ipKey}`
+  if (isResetRateLimited(emailKey) || isResetRateLimited(ipRateLimitKey)) {
+    response.status(429).json({ message: 'Terlalu banyak permintaan. Silakan coba lagi nanti.' })
+    return
+  }
   if (!mailTransport) {
-    response.status(503).json({ message: 'Email OTP belum dikonfigurasi. Isi SMTP_HOST, SMTP_USER, dan SMTP_PASSWORD di file .env.' })
+    response.status(503).json({ message: 'Email OTP belum dikonfigurasi. Isi SMTP_HOST, SMTP_USER, dan SMTP_PASSWORD di environment.' })
     return
   }
   try {
-    const [users] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username FROM users WHERE email = ?', [email])
-    if (!users[0]) {
-      response.status(404).json({ message: 'Email tidak ditemukan' })
+    const users = await pool.query<{ id: string }>('SELECT id FROM users WHERE email = $1', [email])
+    if (!users.rows[0]) {
+      response.json({ ok: true })
       return
     }
     const code = String(Math.floor(100000 + Math.random() * 900000))
     const codeHash = createHash('sha256').update(code).digest('hex')
-    await pool.query('DELETE FROM password_reset_tokens WHERE user_id = ? OR expires_at < NOW()', [users[0].id])
-    await pool.query(
-      'INSERT INTO password_reset_tokens (id, user_id, email, code_hash, expires_at) VALUES (?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL 10 MINUTE))',
-      [randomUUID(), users[0].id, email, codeHash],
-    )
     await mailTransport.sendMail({
       from: process.env.SMTP_FROM || process.env.SMTP_USER,
       to: email,
       subject: 'Kode OTP Reset Password QR Inspektorat',
       text: `Kode OTP Anda adalah ${code}. Kode ini berlaku selama 10 menit.`,
     })
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at < CURRENT_TIMESTAMP', [users.rows[0].id])
+      await client.query(
+        "INSERT INTO password_reset_tokens (id, user_id, email, code_hash, expires_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
+        [randomUUID(), users.rows[0].id, email, codeHash],
+      )
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK').catch((rollbackError) => console.error('Password reset token rollback failed:', rollbackError))
+      throw error
+    } finally {
+      client.release()
+    }
     response.json({ ok: true })
   } catch (error) {
     console.error('Password reset email failed:', error)
@@ -172,19 +307,47 @@ app.post('/api/auth/password/forgot', async (request, response) => {
 })
 
 app.post('/api/auth/password/verify', async (request, response) => {
-  const email = String(request.body.email || '').trim().toLowerCase()
-  const code = String(request.body.code || '').trim()
-  const codeHash = createHash('sha256').update(code).digest('hex')
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
-    'SELECT id, user_id FROM password_reset_tokens WHERE email = ? AND code_hash = ? AND used_at IS NULL AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
-    [email, codeHash],
-  )
-  if (!rows[0]) {
-    response.status(400).json({ message: 'OTP salah atau sudah kedaluwarsa' })
-    return
+  let client: PoolClient | undefined
+  try {
+    client = await pool.connect()
+    const email = String(request.body.email || '').trim().toLowerCase()
+    const code = String(request.body.code || '').trim()
+    if (!validEmail(email) || !/^\d{6}$/.test(code)) {
+      response.status(400).json({ message: 'Email atau OTP tidak valid' })
+      return
+    }
+    const codeHash = createHash('sha256').update(code).digest('hex')
+    await client.query('BEGIN')
+    const result = await client.query<{ id: string; user_id: string }>(
+      `SELECT token.id, token.user_id
+       FROM password_reset_tokens token
+       JOIN users user_record ON user_record.id = token.user_id
+       WHERE token.email = $1
+         AND user_record.email = $1
+         AND token.code_hash = $2
+         AND token.used_at IS NULL
+         AND token.expires_at > CURRENT_TIMESTAMP
+       ORDER BY token.created_at DESC
+       LIMIT 1
+       FOR UPDATE OF token`,
+      [email, codeHash],
+    )
+    if (!result.rows[0]) {
+      await client.query('ROLLBACK')
+      response.status(400).json({ message: 'OTP salah atau sudah kedaluwarsa' })
+      return
+    }
+    await client.query('COMMIT')
+    response.json({ resetToken: resetTokenFor(result.rows[0].user_id, result.rows[0].id) })
+  } catch (error) {
+    if (client) {
+      await client.query('ROLLBACK').catch((rollbackError) => console.error('OTP verification rollback failed:', rollbackError))
+    }
+    console.error('Password reset verification failed:', error)
+    response.status(500).json({ message: 'Verifikasi OTP gagal' })
+  } finally {
+    client?.release()
   }
-  await pool.query('UPDATE password_reset_tokens SET used_at = NOW() WHERE id = ?', [rows[0].id])
-  response.json({ resetToken: resetTokenFor(rows[0].user_id) })
 })
 
 app.post('/api/auth/password/reset', async (request, response) => {
@@ -195,110 +358,271 @@ app.post('/api/auth/password/reset', async (request, response) => {
     return
   }
   try {
-    const payload = jwt.verify(token, jwtSecret) as { userId: string; purpose?: string }
-    if (payload.purpose !== 'password-reset') {
+    const payload = verifiedPayload(token)
+    if (payload.purpose !== 'password-reset' || !payload.jti || !validUuid(payload.jti)) {
       response.status(401).json({ message: 'Token reset tidak valid' })
       return
     }
     const passwordHash = await bcrypt.hash(password, 12)
-    await pool.query('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [passwordHash, payload.userId])
+    const client = await pool.connect()
+    try {
+      await client.query('BEGIN')
+      const resetToken = await client.query<{ user_id: string }>(
+        `SELECT user_id
+         FROM password_reset_tokens
+         WHERE id = $1
+           AND user_id = $2
+           AND used_at IS NULL
+           AND expires_at > CURRENT_TIMESTAMP
+         FOR UPDATE`,
+        [payload.jti, payload.userId],
+      )
+      if (!resetToken.rows[0]) {
+        await client.query('ROLLBACK')
+        response.status(401).json({ message: 'Token reset tidak valid atau sudah kedaluwarsa' })
+        return
+      }
+      await client.query(
+        'UPDATE users SET password_hash = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2',
+        [passwordHash, resetToken.rows[0].user_id],
+      )
+      await client.query(
+        'UPDATE password_reset_tokens SET used_at = CURRENT_TIMESTAMP WHERE id = $1 AND used_at IS NULL',
+        [payload.jti],
+      )
+      await client.query('COMMIT')
+    } catch (error) {
+      await client.query('ROLLBACK').catch((rollbackError) => console.error('Password reset rollback failed:', rollbackError))
+      throw error
+    } finally {
+      client.release()
+    }
     response.json({ ok: true })
-  } catch {
+  } catch (error) {
+    console.error('Password reset failed:', error)
     response.status(401).json({ message: 'Token reset tidak valid atau sudah kedaluwarsa' })
   }
 })
 
 app.get('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, DATE_FORMAT(date_of_birth, "%Y-%m-%d") AS date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
-  if (!rows[0]) {
+  const result = await pool.query<UserRow>(
+    'SELECT id, username, email, to_char(date_of_birth, \'YYYY-MM-DD\') AS date_of_birth, job_field, profile_image FROM users WHERE id = $1',
+    [request.userId],
+  )
+  if (!result.rows[0]) {
     response.status(404).json({ message: 'User tidak ditemukan' })
     return
   }
-  response.json({ id: rows[0].id, username: rows[0].username, email: rows[0].email, dateOfBirth: rows[0].date_of_birth, field: rows[0].job_field, profileImage: rows[0].profile_image })
+  response.json(userResponse(result.rows[0]))
 })
 
 app.put('/api/auth/me', requireAuth, async (request: AuthRequest, response) => {
   const { username, email, dateOfBirth, field, profileImage } = request.body
-  await pool.query('UPDATE users SET username = ?, email = ?, date_of_birth = ?, job_field = ?, profile_image = ? WHERE id = ?', [username, email, dateOfBirth || null, field || '', profileImage || null, request.userId])
-  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT id, username, email, DATE_FORMAT(date_of_birth, "%Y-%m-%d") AS date_of_birth, job_field, profile_image FROM users WHERE id = ?', [request.userId])
-  response.json({ id: rows[0].id, username: rows[0].username, email: rows[0].email, dateOfBirth: rows[0].date_of_birth, field: rows[0].job_field, profileImage: rows[0].profile_image })
+  if (!nonEmptyString(username) || !validEmail(email) || (dateOfBirth !== null && dateOfBirth !== undefined && !validDate(dateOfBirth)) || (field !== undefined && typeof field !== 'string') || (profileImage !== null && profileImage !== undefined && typeof profileImage !== 'string')) {
+    response.status(400).json({ message: 'Data profil tidak valid' })
+    return
+  }
+  await pool.query(
+    'UPDATE users SET username = $1, email = $2, date_of_birth = $3, job_field = $4, profile_image = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6',
+    [username, email, dateOfBirth || null, field || '', profileImage || null, request.userId],
+  )
+  const result = await pool.query<UserRow>(
+    'SELECT id, username, email, to_char(date_of_birth, \'YYYY-MM-DD\') AS date_of_birth, job_field, profile_image FROM users WHERE id = $1',
+    [request.userId],
+  )
+  response.json(userResponse(result.rows[0]))
 })
 
-app.get('/api/history', requireAuth, async (_request, response) => {
-  const [rows] = await pool.query('SELECT id, action, product_id, product_name, user_name, user_field, product_location, product_quantity, details, created_at FROM activity_logs ORDER BY created_at DESC')
-  response.json(rows)
+app.get('/api/history', requireAuth, async (request, response) => {
+  const requestedLimit = Number(request.query.limit || 100)
+  const requestedOffset = Number(request.query.offset || 0)
+  if (!Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 100 || !Number.isInteger(requestedOffset) || requestedOffset < 0) {
+    response.status(400).json({ message: 'Parameter pagination tidak valid' })
+    return
+  }
+  const result = await pool.query(
+    `SELECT id, action, product_id, product_name, user_name, user_field, product_location, product_quantity, details, created_at
+     FROM activity_logs
+     ORDER BY created_at DESC, id DESC
+     LIMIT $1 OFFSET $2`,
+    [requestedLimit + 1, requestedOffset],
+  )
+  const hasMore = result.rows.length > requestedLimit
+  if (hasMore) result.rows.pop()
+  response.setHeader('X-History-Limit', String(requestedLimit))
+  response.setHeader('X-History-Offset', String(requestedOffset))
+  response.setHeader('X-History-Has-More', String(hasMore))
+  response.json(result.rows)
 })
 
 app.post('/api/history', requireAuth, async (request: AuthRequest, response) => {
   const { action, productId, productName, location, quantity } = request.body
-  if (action !== 'download_qr' || !productId || !productName) {
+  if (action !== 'download_qr' || !validUuid(productId) || !nonEmptyString(productName) || (location !== undefined && typeof location !== 'string') || (quantity !== undefined && !validQuantity(quantity))) {
     response.status(400).json({ message: 'Data aktivitas tidak valid' })
     return
   }
-  await logActivity(request.userId!, action, { id: productId, name: productName, location, quantity })
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const product = await client.query<{ name: string; location: string; quantity: number }>(
+      'SELECT name, location, quantity FROM products WHERE id = $1',
+      [productId],
+    )
+    if (!product.rows[0]) {
+      await client.query('ROLLBACK')
+      response.status(404).json({ message: 'Produk tidak ditemukan' })
+      return
+    }
+    await logActivity(client, request.userId!, action, {
+      id: productId,
+      name: product.rows[0].name,
+      location: product.rows[0].location,
+      quantity: product.rows[0].quantity,
+    })
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK').catch((rollbackError) => console.error('Activity log rollback failed:', rollbackError))
+    throw error
+  } finally {
+    client.release()
+  }
   response.status(201).json({ ok: true })
 })
 
 app.get('/api/products', requireAuth, async (_request, response) => {
-  const [rows] = await pool.query('SELECT * FROM products ORDER BY timestamp DESC')
-  response.json(rows)
+  const result = await pool.query('SELECT * FROM products ORDER BY timestamp DESC')
+  response.json(result.rows)
 })
 
 app.get('/api/products/:id', requireAuth, async (request, response) => {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>('SELECT * FROM products WHERE id = ?', [request.params.id])
-  if (!rows[0]) {
+  if (!validUuid(request.params.id)) {
+    response.status(400).json({ message: 'ID produk tidak valid' })
+    return
+  }
+  const productId = String(request.params.id)
+  const result = await pool.query<ProductRow>('SELECT * FROM products WHERE id = $1', [productId])
+  if (!result.rows[0]) {
     response.status(404).json({ message: 'Produk tidak ditemukan' })
     return
   }
-  response.json(rows[0])
+  response.json(result.rows[0])
 })
 
 app.get('/api/products/:id/public', async (request, response) => {
-  const [rows] = await pool.query<mysql.RowDataPacket[]>(
+  if (!validUuid(request.params.id)) {
+    response.status(400).json({ message: 'ID produk tidak valid' })
+    return
+  }
+  const result = await pool.query(
     `SELECT p.*, added.user_name AS added_by, added.created_at AS added_at
      FROM products p
      LEFT JOIN (
-       SELECT product_id, user_name, created_at
+       SELECT DISTINCT ON (product_id) product_id, user_name, created_at
        FROM activity_logs
        WHERE action = 'add'
-       ORDER BY created_at ASC
+       ORDER BY product_id, created_at ASC
      ) added ON added.product_id = p.id
-     WHERE p.id = ?
+     WHERE p.id = $1
      LIMIT 1`,
-    [request.params.id],
+    [String(request.params.id)],
   )
-  if (!rows[0]) {
+  if (!result.rows[0]) {
     response.status(404).json({ message: 'Produk tidak ditemukan' })
     return
   }
-  response.json(rows[0])
+  response.json(result.rows[0])
 })
 
 app.post('/api/products', requireAuth, async (request: AuthRequest, response) => {
   const { id, name, location, quantity, image, timestamp } = request.body
-  await pool.query('INSERT INTO products (id, name, location, quantity, image, timestamp) VALUES (?, ?, ?, ?, ?, ?)', [id, name, location, quantity, image || null, timestamp])
-  await logActivity(request.userId!, 'add', { id, name, location, quantity })
+  if (!validUuid(id) || !nonEmptyString(name) || !nonEmptyString(location) || !validQuantity(quantity) || (image !== null && image !== undefined && typeof image !== 'string') || !validTimestamp(timestamp)) {
+    response.status(400).json({ message: 'Data produk tidak valid' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      'INSERT INTO products (id, name, location, quantity, image, timestamp) VALUES ($1, $2, $3, $4, $5, $6)',
+      [id, name, location, quantity, image || null, timestamp],
+    )
+    await logActivity(client, request.userId!, 'add', { id, name, location, quantity })
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK').catch((rollbackError) => console.error('Product insert rollback failed:', rollbackError))
+    throw error
+  } finally {
+    client.release()
+  }
   response.status(201).json({ id, name, location, quantity, image, timestamp })
 })
 
 app.put('/api/products/:id', requireAuth, async (request: AuthRequest, response) => {
   const { name, location, quantity, image, timestamp } = request.body
-  await pool.query('UPDATE products SET name = ?, location = ?, quantity = ?, image = ?, timestamp = ? WHERE id = ?', [name, location, quantity, image || null, timestamp, request.params.id])
-  await logActivity(request.userId!, 'update', { id: request.params.id, name, location, quantity })
+  if (!validUuid(request.params.id) || !nonEmptyString(name) || !nonEmptyString(location) || !validQuantity(quantity) || (image !== null && image !== undefined && typeof image !== 'string') || !validTimestamp(timestamp)) {
+    response.status(400).json({ message: 'Data produk tidak valid' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const updateResult = await client.query(
+      'UPDATE products SET name = $1, location = $2, quantity = $3, image = $4, timestamp = $5, updated_at = CURRENT_TIMESTAMP WHERE id = $6',
+      [name, location, quantity, image || null, timestamp, String(request.params.id)],
+    )
+    if (updateResult.rowCount !== 1) {
+      await client.query('ROLLBACK')
+      response.status(404).json({ message: 'Produk tidak ditemukan' })
+      return
+    }
+    await logActivity(client, request.userId!, 'update', { id: String(request.params.id), name, location, quantity })
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK').catch((rollbackError) => console.error('Product update activity rollback failed:', rollbackError))
+    throw error
+  } finally {
+    client.release()
+  }
   response.json({ ok: true })
 })
 
 app.delete('/api/products/:id', requireAuth, async (request: AuthRequest, response) => {
-  const [products] = await pool.query<mysql.RowDataPacket[]>('SELECT name, location, quantity FROM products WHERE id = ?', [request.params.id])
-  await pool.query('DELETE FROM products WHERE id = ?', [request.params.id])
-  if (products[0]) await logActivity(request.userId!, 'delete', { id: request.params.id, name: products[0].name, location: products[0].location, quantity: products[0].quantity })
+  if (!validUuid(request.params.id)) {
+    response.status(400).json({ message: 'ID produk tidak valid' })
+    return
+  }
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const products = await client.query<{ name: string; location: string; quantity: number }>(
+      'SELECT name, location, quantity FROM products WHERE id = $1 FOR UPDATE',
+      [String(request.params.id)],
+    )
+    if (!products.rows[0]) {
+      await client.query('ROLLBACK')
+      response.status(404).json({ message: 'Produk tidak ditemukan' })
+      return
+    }
+    await logActivity(client, request.userId!, 'delete', { id: String(request.params.id), name: products.rows[0].name, location: products.rows[0].location, quantity: products.rows[0].quantity })
+    await client.query('DELETE FROM products WHERE id = $1', [String(request.params.id)])
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK').catch((rollbackError) => console.error('Product delete rollback failed:', rollbackError))
+    throw error
+  } finally {
+    client.release()
+  }
   response.json({ ok: true })
 })
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
-if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.resolve(__dirname, '../../dist')))
-  app.get('*', (_request, response) => response.sendFile(path.resolve(__dirname, '../../dist/index.html')))
-}
+app.use((error: unknown, _request: Request, response: Response, _next: NextFunction) => {
+  console.error('Unhandled API error:', error)
+  if (response.headersSent) return
+  response.status(500).json({ message: 'Terjadi kesalahan pada server' })
+})
 
-app.listen(port, () => console.log(`MySQL API berjalan di http://127.0.0.1:${port}`))
+export { app }
+
+if (!isProduction) {
+  app.listen(port, () => console.log(`PostgreSQL API berjalan di http://127.0.0.1:${port}`))
+}

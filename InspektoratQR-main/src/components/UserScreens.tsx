@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { ArrowLeft, Check, ChevronRight, Edit3, FilePlus2, Globe2, Trash2, UserRound } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
-import { apiRequest, ApiUser } from '../lib/api'
+import { apiRequest, apiRequestPage, ApiUser } from '../lib/api'
 
 type Language = 'id' | 'en'
 const labels = {
@@ -110,9 +110,33 @@ interface Activity {
 const HistoryScreen = ({ language }: { language: Language }) => {
   const text = labels[language]
   const [activities, setActivities] = useState<Activity[]>([])
-  useEffect(() => { apiRequest<Activity[]>('/history').then(setActivities).catch((error) => console.error('History load failed:', error)) }, [])
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState('')
+  const pageSize = 100
+  const loadHistory = async (nextOffset: number, append: boolean) => {
+    setIsLoading(true)
+    setError('')
+    try {
+      const result = await apiRequestPage<Activity[]>(`/history?limit=${pageSize}&offset=${nextOffset}`)
+      setActivities((current) => {
+        const existingIds = new Set(append ? current.map((activity) => activity.id) : [])
+        const nextActivities = result.data.filter((activity) => !existingIds.has(activity.id))
+        return append ? [...current, ...nextActivities] : nextActivities
+      })
+      setOffset(nextOffset + result.data.length)
+      setHasMore(result.hasMore)
+    } catch (loadError) {
+      console.error('History load failed:', loadError)
+      setError(loadError instanceof Error ? loadError.message : language === 'id' ? 'Gagal memuat riwayat.' : 'Failed to load history.')
+    } finally {
+      setIsLoading(false)
+    }
+  }
+  useEffect(() => { void loadHistory(0, false) }, [])
   const actionText = (action: Activity['action']) => ({ add: language === 'id' ? 'menambahkan' : 'added', download_qr: language === 'id' ? 'mengunduh QR' : 'downloaded QR', delete: language === 'id' ? 'menghapus' : 'deleted', update: language === 'id' ? 'memperbarui' : 'updated' })[action]
-  return <><UserHero title={text.history} language={language} user={null} /><div className="user-panel history-panel">{activities.length === 0 ? <p className="history-empty">{language === 'id' ? 'Belum ada aktivitas.' : 'No activity yet.'}</p> : activities.map((activity) => <div className="history-row" key={activity.id}>{activity.action === 'delete' ? <Trash2 /> : activity.action === 'download_qr' ? <Globe2 /> : activity.action === 'update' ? <Check /> : <FilePlus2 />}<div><strong>{activity.user_name}</strong> {actionText(activity.action)} <strong>{activity.product_name}</strong><small>{activity.user_field} · {activity.product_location} · Qty {activity.product_quantity ?? '-'} · {new Date(activity.created_at).toLocaleString(language === 'id' ? 'id-ID' : 'en-US')}</small></div></div>)}</div></>
+  return <><UserHero title={text.history} language={language} user={null} /><div className="user-panel history-panel">{error && <p className="auth-message error">{error}</p>}{isLoading && activities.length === 0 && <p className="history-empty">{language === 'id' ? 'Memuat riwayat...' : 'Loading history...'}</p>}{!isLoading && !error && activities.length === 0 && <p className="history-empty">{language === 'id' ? 'Belum ada aktivitas.' : 'No activity yet.'}</p>}{activities.map((activity) => <div className="history-row" key={activity.id}>{activity.action === 'delete' ? <Trash2 /> : activity.action === 'download_qr' ? <Globe2 /> : activity.action === 'update' ? <Check /> : <FilePlus2 />}<div><strong>{activity.user_name}</strong> {actionText(activity.action)} <strong>{activity.product_name}</strong><small>{activity.user_field} · {activity.product_location} · Qty {activity.product_quantity ?? '-'} · {new Date(activity.created_at).toLocaleString(language === 'id' ? 'id-ID' : 'en-US')}</small></div></div>)}{hasMore && <button className="primary-button" type="button" disabled={isLoading} onClick={() => void loadHistory(offset, true)}>{isLoading ? (language === 'id' ? 'Memuat...' : 'Loading...') : (language === 'id' ? 'Muat Lebih Banyak' : 'Load More')}</button>}</div></>
 }
 
 const LanguageScreen = ({ language, setLanguage }: { language: Language; setLanguage: (value: Language) => void }) => {
