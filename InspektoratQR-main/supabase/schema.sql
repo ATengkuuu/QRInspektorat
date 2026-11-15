@@ -51,12 +51,31 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
   email VARCHAR(255) NOT NULL,
   code_hash CHAR(64) NOT NULL,
   expires_at TIMESTAMPTZ NOT NULL,
+  otp_verified_at TIMESTAMPTZ,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  invalidated_at TIMESTAMPTZ,
   used_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT password_reset_tokens_attempt_count_check CHECK (attempt_count >= 0 AND attempt_count <= max_attempts),
+  CONSTRAINT password_reset_tokens_max_attempts_check CHECK (max_attempts = 5)
 );
 
 CREATE INDEX IF NOT EXISTS idx_reset_email_created
   ON password_reset_tokens (email, created_at);
+
+CREATE TABLE IF NOT EXISTS password_reset_rate_limits (
+  scope VARCHAR(10) NOT NULL,
+  identifier_hash CHAR(64) NOT NULL,
+  window_started_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  request_count INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (scope, identifier_hash),
+  CONSTRAINT password_reset_rate_limits_scope_check CHECK (scope IN ('email', 'ip')),
+  CONSTRAINT password_reset_rate_limits_count_check CHECK (request_count >= 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_password_reset_rate_limits_window
+  ON password_reset_rate_limits (window_started_at);
 
 CREATE OR REPLACE FUNCTION set_updated_at()
 RETURNS TRIGGER

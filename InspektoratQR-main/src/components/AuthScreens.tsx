@@ -76,6 +76,7 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
 
   const isPasswordMode = mode === 'signup' || mode === 'reset'
   const currentEmail = email || location.state?.email || ''
+  const isResetPasswordValid = mode !== 'reset' || (password.length >= 6 && confirmation.length >= 6 && password === confirmation)
 
   return (
     <div className="auth-screen">
@@ -117,7 +118,7 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
           {isPasswordMode && (
             <div className="auth-password-field">
               <Lock className="auth-icon" />
-              <input className="auth-input" type={showPassword ? 'text' : 'password'} required minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === 'signup' ? 'Password' : 'New Password'} />
+              <input className="auth-input" type={showPassword ? 'text' : 'password'} required minLength={6} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === 'signup' ? 'Password' : 'New Password'} aria-label={mode === 'reset' ? 'New Password' : 'Password'} />
               <button type="button" className="password-toggle" onClick={() => setShowPassword((visible) => !visible)} aria-label="Show password">
                 {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
@@ -135,11 +136,14 @@ const AuthScreens = ({ mode }: AuthScreensProps) => {
           {mode === 'reset' && (
             <div className="auth-password-field">
               <Lock className="auth-icon" />
-              <input className="auth-input" type={showPassword ? 'text' : 'password'} required minLength={6} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="Confirm New Password" />
+              <input className="auth-input" type={showConfirmation ? 'text' : 'password'} required minLength={6} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} placeholder="Confirm New Password" aria-label="Confirm New Password" />
+              <button type="button" className="password-toggle" onClick={() => setShowConfirmation((visible) => !visible)} aria-label={showConfirmation ? 'Hide confirmation password' : 'Show confirmation password'}>
+                {showConfirmation ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
             </div>
           )}
           {mode === 'signup' && <label className="remember-row"><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} /> Remember me</label>}
-          <button className="primary-button" type="submit" disabled={isLoading}>{isLoading ? 'Please wait...' : mode === 'signup' ? 'Sign Up' : mode === 'forgot' ? 'Continue' : mode === 'verify' ? 'Verify' : 'Continue'}</button>
+          <button className="primary-button" type="submit" disabled={isLoading || !isResetPasswordValid}>{isLoading ? 'Please wait...' : mode === 'signup' ? 'Sign Up' : mode === 'forgot' ? 'Continue' : mode === 'verify' ? 'Verify' : 'Continue'}</button>
         </form>
 
         {mode === 'signup' && <p className="auth-switch">Already have an account? <button type="button" onClick={() => navigate('/login')}>Sign In</button></p>}

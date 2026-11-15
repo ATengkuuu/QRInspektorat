@@ -5,7 +5,8 @@ import bcrypt from 'bcryptjs'
 import jwt from 'jsonwebtoken'
 import { Pool, PoolClient } from 'pg'
 import nodemailer from 'nodemailer'
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
+import { isIP } from 'node:net'
 
 const isProduction = process.env.NODE_ENV === 'production'
 function requiredEnvironment(name: string): string {
@@ -16,11 +17,22 @@ function requiredEnvironment(name: string): string {
 
 const databaseUrl = requiredEnvironment('DATABASE_URL')
 const app = express()
+app.set('trust proxy', process.env.VERCEL === '1' ? 1 : false)
 const port = Number(process.env.API_PORT || 3001)
 const jwtSecret = requiredEnvironment('JWT_SECRET')
 if (isProduction && (jwtSecret.length < 32 || jwtSecret.toLowerCase().includes('change-me') || jwtSecret.toLowerCase().includes('placeholder'))) {
   throw new Error('JWT_SECRET must be a strong non-placeholder value in production')
 }
+const configuredRateLimitSecret = process.env.RATE_LIMIT_SECRET
+if (configuredRateLimitSecret) {
+  if (configuredRateLimitSecret.length < 32) {
+    throw new Error('RATE_LIMIT_SECRET must be at least 32 characters')
+  }
+  if (isProduction && (configuredRateLimitSecret.toLowerCase().includes('change-me') || configuredRateLimitSecret.toLowerCase().includes('placeholder'))) {
+    throw new Error('RATE_LIMIT_SECRET must be a strong non-placeholder value in production')
+  }
+}
+const rateLimitSecret = configuredRateLimitSecret || jwtSecret
 
 const databaseSsl = process.env.DATABASE_SSL !== 'false'
 const pool = new Pool({
@@ -56,9 +68,7 @@ const mailTransport = process.env.SMTP_HOST && process.env.SMTP_USER && smtpPass
       auth: { user: process.env.SMTP_USER, pass: smtpPassword },
     })
   : null
-const resetRequestWindowMs = 15 * 60 * 1000
 const resetRequestLimit = 3
-const resetRequestHistory = new Map<string, number[]>()
 
 type AuthRequest = Request & { userId?: string }
 type UserRow = {
@@ -107,15 +117,45 @@ function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && 'code' in error && error.code === '23505'
 }
 
-function isResetRateLimited(key: string, now = Date.now()): boolean {
-  const recentRequests = (resetRequestHistory.get(key) || []).filter((timestamp) => now - timestamp < resetRequestWindowMs)
-  if (recentRequests.length >= resetRequestLimit) {
-    resetRequestHistory.set(key, recentRequests)
-    return true
+async function consumeResetRateLimit(client: PoolClient, scope: 'email' | 'ip', identifier: string): Promise<boolean> {
+  const normalizedIdentifier = scope === 'email' ? identifier.trim().toLowerCase() : identifier
+  const identifierHash = createHmac('sha256', rateLimitSecret).update(normalizedIdentifier).digest('hex')
+  const result = await client.query<{ request_count: number }>(
+    `INSERT INTO password_reset_rate_limits (scope, identifier_hash, window_started_at, request_count)
+     VALUES ($1, $2, statement_timestamp(), 1)
+     ON CONFLICT (scope, identifier_hash)
+     DO UPDATE SET
+       window_started_at = CASE
+         WHEN password_reset_rate_limits.window_started_at <= statement_timestamp() - INTERVAL '15 minutes'
+         THEN statement_timestamp()
+         ELSE password_reset_rate_limits.window_started_at
+       END,
+       request_count = CASE
+         WHEN password_reset_rate_limits.window_started_at <= statement_timestamp() - INTERVAL '15 minutes'
+         THEN 1
+         ELSE password_reset_rate_limits.request_count + 1
+       END
+     RETURNING request_count`,
+    [scope, identifierHash],
+  )
+  return (result.rows[0]?.request_count || resetRequestLimit + 1) > resetRequestLimit
+}
+
+async function invalidateResetToken(tokenId: string): Promise<void> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      'UPDATE password_reset_tokens SET invalidated_at = CURRENT_TIMESTAMP WHERE id = $1 AND otp_verified_at IS NULL AND used_at IS NULL',
+      [tokenId],
+    )
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK').catch((rollbackError) => console.error('Reset token invalidation rollback failed:', rollbackError))
+    throw error
+  } finally {
+    client.release()
   }
-  recentRequests.push(now)
-  resetRequestHistory.set(key, recentRequests)
-  return false
 }
 
 function userResponse(user: UserRow) {
@@ -259,12 +299,30 @@ app.post('/api/auth/password/forgot', async (request, response) => {
     response.status(400).json({ message: 'Email wajib diisi' })
     return
   }
-  const ipKey = request.ip || request.socket.remoteAddress || 'unknown'
-  const emailKey = `email:${email}`
-  const ipRateLimitKey = `ip:${ipKey}`
-  if (isResetRateLimited(emailKey) || isResetRateLimited(ipRateLimitKey)) {
-    response.status(429).json({ message: 'Terlalu banyak permintaan. Silakan coba lagi nanti.' })
+  const ipKey = request.ip || request.socket.remoteAddress
+  if (!ipKey || isIP(ipKey) === 0) {
+    response.status(503).json({ message: 'Permintaan reset password belum dapat diproses' })
     return
+  }
+  let rateLimitClient: PoolClient | undefined
+  try {
+    rateLimitClient = await pool.connect()
+    await rateLimitClient.query('BEGIN')
+    const emailRateLimited = await consumeResetRateLimit(rateLimitClient, 'email', email)
+    const ipRateLimited = await consumeResetRateLimit(rateLimitClient, 'ip', ipKey)
+    if (emailRateLimited || ipRateLimited) {
+      await rateLimitClient.query('ROLLBACK')
+      response.status(429).json({ message: 'Terlalu banyak permintaan. Silakan coba lagi nanti.' })
+      return
+    }
+    await rateLimitClient.query('COMMIT')
+  } catch (error) {
+    await rateLimitClient?.query('ROLLBACK').catch((rollbackError) => console.error('Rate limit rollback failed:', rollbackError))
+    console.error('Password reset rate limit failed:', error)
+    response.status(503).json({ message: 'Permintaan reset password belum dapat diproses' })
+    return
+  } finally {
+    rateLimitClient?.release()
   }
   if (!mailTransport) {
     response.status(503).json({ message: 'Email OTP belum dikonfigurasi. Isi SMTP_HOST, SMTP_USER, dan SMTP_PASSWORD di environment.' })
@@ -276,21 +334,23 @@ app.post('/api/auth/password/forgot', async (request, response) => {
       response.json({ ok: true })
       return
     }
-    const code = String(Math.floor(100000 + Math.random() * 900000))
+    const code = String(randomInt(100000, 1000000))
     const codeHash = createHash('sha256').update(code).digest('hex')
-    await mailTransport.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to: email,
-      subject: 'Kode OTP Reset Password QR Inspektorat',
-      text: `Kode OTP Anda adalah ${code}. Kode ini berlaku selama 10 menit.`,
-    })
+    const tokenId = randomUUID()
     const client = await pool.connect()
     try {
       await client.query('BEGIN')
-      await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at < CURRENT_TIMESTAMP', [users.rows[0].id])
+      const lockedUser = await client.query<{ id: string }>(
+        'SELECT id FROM users WHERE id = $1 FOR UPDATE',
+        [users.rows[0].id],
+      )
+      if (!lockedUser.rows[0]) {
+        throw new Error('User disappeared before password reset token creation')
+      }
+      await client.query('DELETE FROM password_reset_tokens WHERE user_id = $1 OR expires_at < CURRENT_TIMESTAMP', [lockedUser.rows[0].id])
       await client.query(
-        "INSERT INTO password_reset_tokens (id, user_id, email, code_hash, expires_at) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP + INTERVAL '10 minutes')",
-        [randomUUID(), users.rows[0].id, email, codeHash],
+        "INSERT INTO password_reset_tokens (id, user_id, email, code_hash, expires_at, attempt_count, max_attempts) VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP + INTERVAL '10 minutes', $5, $6)",
+        [tokenId, lockedUser.rows[0].id, email, codeHash, 0, 5],
       )
       await client.query('COMMIT')
     } catch (error) {
@@ -298,6 +358,19 @@ app.post('/api/auth/password/forgot', async (request, response) => {
       throw error
     } finally {
       client.release()
+    }
+    try {
+      await mailTransport.sendMail({
+        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: email,
+        subject: 'Kode OTP Reset Password QR Inspektorat',
+        text: `Kode OTP Anda adalah ${code}. Kode ini berlaku selama 10 menit.`,
+      })
+    } catch (error) {
+      await invalidateResetToken(tokenId).catch((invalidationError) => {
+        console.error('Reset token invalidation failed after email error:', invalidationError)
+      })
+      throw error
     }
     response.json({ ok: true })
   } catch (error) {
@@ -318,27 +391,67 @@ app.post('/api/auth/password/verify', async (request, response) => {
     }
     const codeHash = createHash('sha256').update(code).digest('hex')
     await client.query('BEGIN')
-    const result = await client.query<{ id: string; user_id: string }>(
-      `SELECT token.id, token.user_id
+    const result = await client.query<{
+      id: string
+      user_id: string
+      code_hash: string
+      attempt_count: number
+      max_attempts: number
+      otp_verified_at: string | null
+      invalidated_at: string | null
+      used_at: string | null
+      expires_at: string
+    }>(
+      `SELECT token.id, token.user_id, token.code_hash, token.attempt_count, token.max_attempts,
+              token.otp_verified_at, token.invalidated_at, token.used_at, token.expires_at
        FROM password_reset_tokens token
        JOIN users user_record ON user_record.id = token.user_id
        WHERE token.email = $1
          AND user_record.email = $1
-         AND token.code_hash = $2
-         AND token.used_at IS NULL
-         AND token.expires_at > CURRENT_TIMESTAMP
        ORDER BY token.created_at DESC
        LIMIT 1
        FOR UPDATE OF token`,
-      [email, codeHash],
+      [email],
     )
     if (!result.rows[0]) {
       await client.query('ROLLBACK')
       response.status(400).json({ message: 'OTP salah atau sudah kedaluwarsa' })
       return
     }
+    const token = result.rows[0]
+    if (token.otp_verified_at || token.invalidated_at || token.used_at || new Date(token.expires_at).getTime() <= Date.now() || token.attempt_count >= token.max_attempts) {
+      await client.query('ROLLBACK')
+      response.status(400).json({ message: 'OTP salah atau sudah kedaluwarsa' })
+      return
+    }
+    const storedHash = Buffer.from(token.code_hash, 'hex')
+    const submittedHash = Buffer.from(codeHash, 'hex')
+    const hashMatches = storedHash.length === submittedHash.length && timingSafeEqual(storedHash, submittedHash)
+    if (!hashMatches) {
+      const attempt = await client.query(
+        'UPDATE password_reset_tokens SET attempt_count = attempt_count + 1 WHERE id = $1 AND attempt_count < max_attempts',
+        [token.id],
+      )
+      if (attempt.rowCount !== 1) {
+        await client.query('ROLLBACK')
+        response.status(400).json({ message: 'OTP salah atau sudah kedaluwarsa' })
+        return
+      }
+      await client.query('COMMIT')
+      response.status(400).json({ message: 'OTP salah atau sudah kedaluwarsa' })
+      return
+    }
+    const verification = await client.query(
+      'UPDATE password_reset_tokens SET otp_verified_at = CURRENT_TIMESTAMP WHERE id = $1 AND otp_verified_at IS NULL',
+      [token.id],
+    )
+    if (verification.rowCount !== 1) {
+      await client.query('ROLLBACK')
+      response.status(400).json({ message: 'OTP salah atau sudah kedaluwarsa' })
+      return
+    }
     await client.query('COMMIT')
-    response.json({ resetToken: resetTokenFor(result.rows[0].user_id, result.rows[0].id) })
+    response.json({ resetToken: resetTokenFor(token.user_id, token.id) })
   } catch (error) {
     if (client) {
       await client.query('ROLLBACK').catch((rollbackError) => console.error('OTP verification rollback failed:', rollbackError))
@@ -372,6 +485,8 @@ app.post('/api/auth/password/reset', async (request, response) => {
          FROM password_reset_tokens
          WHERE id = $1
            AND user_id = $2
+           AND otp_verified_at IS NOT NULL
+           AND invalidated_at IS NULL
            AND used_at IS NULL
            AND expires_at > CURRENT_TIMESTAMP
          FOR UPDATE`,
