@@ -18,7 +18,7 @@ function requiredEnvironment(name: string): string {
 const databaseUrl = requiredEnvironment('DATABASE_URL')
 const app = express()
 app.set('trust proxy', process.env.VERCEL === '1' ? 1 : false)
-const port = Number(process.env.API_PORT || 3001)
+const port = Number(process.env.PORT || process.env.API_PORT || 3001)
 const jwtSecret = requiredEnvironment('JWT_SECRET')
 if (isProduction && (jwtSecret.length < 32 || jwtSecret.toLowerCase().includes('change-me') || jwtSecret.toLowerCase().includes('placeholder'))) {
   throw new Error('JWT_SECRET must be a strong non-placeholder value in production')
@@ -738,6 +738,8 @@ app.use((error: unknown, _request: Request, response: Response, _next: NextFunct
 
 export { app }
 
-if (!isProduction) {
-  app.listen(port, () => console.log(`PostgreSQL API berjalan di http://127.0.0.1:${port}`))
+if (!process.env.VERCEL) {
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`PostgreSQL API berjalan pada port ${port}`)
+  })
 }
